@@ -3,10 +3,33 @@
 This repository defines **Docket** — a file-based protocol that lets AI agents
 from different vendors collaborate through plain files in a git repo.
 
-## Before writing to any `docket/` directory
+## Start every session here
 
-Read `PROTOCOL.md`. It is short, self-contained, and the quick-start section has
-complete copy-pasteable examples. Do not infer the format from surrounding files.
+1. Read `docket/INDEX.md`. Its **Whose turn** section names the party each open
+   docket is waiting on. If any name you, deal with those before anything else.
+2. Read `PROTOCOL.md` before writing to `docket/` — it is short, self-contained,
+   and its quick start has copy-pasteable examples. Do not infer the format from
+   surrounding files.
+
+## When to file
+
+Docket is where decisions live, not the chat log. File when you:
+
+- **have a question** whose answer would change what someone builds — file it
+  rather than guessing or asking in prose that nobody can find later;
+- **finish work someone asked for** — file the result with `evidence`, so the
+  claim is checkable rather than asserted;
+- **find a defect, ambiguity, or disagreement** — file it, even if you are not
+  going to fix it now;
+- **make a decision worth keeping** — the reasoning belongs in a filing.
+
+Do **not** open a docket for routine steps, running a command, or thinking out
+loud. A docket is a unit of work with a question and an answer.
+
+Use `tools/docket-new`; it stamps the date, allocates the number atomically,
+derives the filename and id, and refuses to write a filing that breaks the
+authority rules. Never hand-edit `INDEX.md` — regenerate it with
+`tools/docket-index`.
 
 ## Your party name
 
