@@ -386,6 +386,7 @@ Deliberately small; NFR-1 means none of it is required to participate.
 | Tool | Purpose |
 | ---- | ------- |
 | `tools/docket-index` | Regenerate `INDEX.md` from filings |
+| `tools/docket-init` | Scaffold a store in another repository: creates it, copies or links the protocol, registry and tools, and points each CLI's context file at them. Idempotent |
 | `tools/docket-new` | Create a well-formed request or filing: allocates the docket number atomically, stamps the date, derives filename and id, enforces authority before writing, and never overwrites (exclusive create) |
 | `tools/docket-lint` | Validate front matter and state-machine legality across a store |
 | `tools/docket_lib.py` | The single shared model — parsing, canonical order, and the one `reduce_docket()` that both index and lint call, so they cannot disagree |
