@@ -1,0 +1,6 @@
+# local approval settings — not shipped with the spec
+.qwen/
+
+# python bytecode
+__pycache__/
+*.pyc

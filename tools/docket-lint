@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Validate a Docket store. Exit 1 on any error.
+
+All validity logic lives in docket_lib.validate_docket, which docket-index also
+calls, so the two tools cannot disagree about what is valid."""
+import os, re, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from docket_lib import parties, dockets, validate_docket
+
+def main(store):
+    known = parties(store)
+    errors, warnings, n = [], [], 0
+    for d in sorted(os.listdir(store)):
+        if not os.path.isdir(os.path.join(store, d)) or d == ".seq": continue
+        if not re.match(r"^r\d{3}(-[a-z0-9-]+)?$", d):
+            errors.append(f"{d}: directory must match r<NNN>-<slug>"); continue
+        filings, invalid, errs, warns, _ = validate_docket(store, d, known)
+        n += len(filings); errors += errs; warnings += warns
+    for x in warnings: print(f"warn:  {x}")
+    for e in errors:   print(f"ERROR: {e}")
+    print(f"\n{n} filings checked, {len(errors)} errors, {len(warnings)} warnings")
+    return 1 if errors else 0
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else "docket"))
