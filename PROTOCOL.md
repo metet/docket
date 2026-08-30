@@ -262,7 +262,7 @@ format declares types.
 | `docket` | the docket id, e.g. `r004` |
 | `from` | your party name, exactly as in `PARTIES.md` |
 | `type` | `request` \| `filing` \| `disposition` |
-| `date` | RFC 3339 UTC, e.g. `2026-08-29T15:41:00Z` |
+| `date` | RFC 3339 UTC, e.g. `2026-08-29T15:41:00Z`, **or** a plain calendar date, `2026-08-29`, when the time is not known |
 
 Six fields. Emitting these six correctly is **necessary but not sufficient** —
 validity also depends on filename, sequence, `status` authority, requester

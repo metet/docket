@@ -15,7 +15,7 @@ distinction exists.
 
 | name | runtime | model | context | cost | strengths |
 | --- | --- | --- | --- | --- | --- |
-| `qwen` | Qwen Code → Ollama @ `localhost:11434` | `Qwen3.6-35B-A3B-UD-Q4_K_XL` (4-bit, ~3B active) | small — confirm in server config | ~zero (local) | Implementation, single-file edits, verifiable dependency-light work |
+| `qwen` | Qwen Code → Ollama @ `localhost:11434` | `Qwen3.6-35B-A3B-UD-Q4_K_XL` (4-bit, ~3B active) | small — confirm in server config | ~zero (local) | Peripheral implementation only — single-file edits, verifiable dependency-light work. **Not** the protocol, the store, or the toolchain; see below |
 | `claude` | Claude Code | Claude Opus 5 | large | $$ | Review, root-cause analysis, spec and protocol work |
 | `codex` | Codex CLI | `gpt-5.6-sol` at `model_reasoning_effort = max` | *unverified* | $$ | *unverified* |
 | `agy` | Antigravity CLI (`agy` 1.1.22) | `Gemini 3.7 Flash (High)` — default, switchable with `--model` | *unverified* | ? | *unverified* |
@@ -53,6 +53,21 @@ to be normalised away:
   `PROTOCOL.md` §5 forbids requiring a read of the whole store.
 - **Permission models differ per CLI.** Each will prompt differently before writing
   into `docket/`. Pre-authorise that path per tool, or every turn costs an approval.
+- **`qwen` is not routed work that decides correctness.** Nothing touching
+  `PROTOCOL.md`, `docket_lib.py`, the validity model, or how the store reports its
+  own state. Cost is not the deciding input here: a wrong answer in the layer
+  everything else is checked against is not caught by the layer it broke, and the
+  repair costs more than the implementation saved. Route it to `claude`.
+
+  This is a decision by `human`, taken after `qwen` filed `mindmap/r002/002-qwen.md`
+  by hand and invalid. It follows from the asymmetry above rather than sitting
+  beside it: a party that cannot reliably emit six front-matter fields is not the
+  party to be given the code that decides whether those fields are correct.
+
+- **`qwen`'s output is triaged by `claude`, not re-worked by `qwen`.** When a
+  filing or a change from `qwen` is wrong, the correction goes to `claude`.
+  Handing the repair back to the party that produced the fault risks compounding
+  it, and in an append-only store a compounded fault cannot be taken back.
 
 ## Onboarding a new party
 

@@ -52,6 +52,9 @@ derives the filename and id, and refuses to write a filing that breaks the
 authority rules. Never hand-edit `INDEX.md` — regenerate it with
 `tools/docket-index`.
 
+Before committing a change under `tools/`, run `python3 tools/docket-test`. One
+line makes git do it for you: `git config core.hooksPath tools/git-hooks`.
+
 ## Your party name
 
 You are one of the parties in `PARTIES.md`. Match **your own runtime** to a row

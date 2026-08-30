@@ -1,0 +1,62 @@
+#!/bin/sh
+# Refuse a commit that breaks the lint, or the suite when this is the toolchain's
+# own repo.
+#
+# Lives in a tracked directory rather than .git/hooks, which is neither tracked
+# nor cloned: every party gets the same gate after one setup line.
+#
+#   git config core.hooksPath <path to this directory>
+#
+# Check core.hooksPath is unset before setting it -- it replaces the repository's
+# whole hooks directory, so an existing .git/hooks would silently stop firing.
+#
+# It resolves its tools from its own location, not from the repository being
+# committed, because a store scaffolded with `docket-init --link` lives in a repo
+# that has no tools/ of its own (r010).
+#
+# Scope, stated so nobody assumes more than it does: this checks the WORKING
+# TREE, not the staged content. A partial `git add` can therefore commit a state
+# this hook never saw. Stashing to test the index exactly costs more than it buys
+# in a repo where every party commits whole files, and a stash that fails to pop
+# loses work -- a worse failure than the one it would catch.
+#
+# Bypass with `git commit --no-verify` when you mean to.
+set -e
+
+hookdir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+tools=$(dirname "$hookdir")
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+# The store is named by DOCKET_STORE, or is the conventional docket/. A repo with
+# no store is not an error: the hook may be installed before the store exists.
+store=${DOCKET_STORE:-docket}
+if [ -d "$store" ]; then
+    # Gate on exit status, never on output. docket-lint carries standing warnings
+    # on purpose -- r003/003 is an ineffective erratum kept as the record of a
+    # mistake (r004) -- and a gate that read stderr would force the repo to erase
+    # its own evidence to stay green.
+    #
+    # Fail only on errors this commit is responsible for. An invalid filing can
+    # never be repaired -- errata cannot correct a filename and rule 1 forbids a
+    # rename -- so gating on a clean store would make this hook uninstallable in
+    # any repo that already has one, which is precisely where it is wanted
+    # (r011). Everything is still reported; only attribution decides the exit.
+    if git diff --cached --quiet 2>/dev/null; then
+        # Nothing staged at all: a manual run, so check the whole store.
+        python3 "$tools/docket-lint" "$store" || {
+            echo "pre-commit: docket-lint failed"; exit 1; }
+    else
+        # Filing names are [a-z0-9-] by rule, so word-splitting them is safe.
+        python3 "$tools/docket-lint" "$store" --gate \
+            $(git diff --cached --name-only --diff-filter=ACM -- "$store") || {
+            echo "pre-commit: docket-lint failed on a filing in this commit"; exit 1; }
+    fi
+fi
+
+# docket-test exercises the toolchain itself, so it is meaningful only in the
+# repository that owns it. A consuming repo runs the lint and nothing else.
+if [ -f "$root/tools/docket-test" ]; then
+    python3 "$root/tools/docket-test" || {
+        echo "pre-commit: docket-test failed"; exit 1; }
+fi

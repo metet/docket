@@ -345,7 +345,11 @@ def validate_docket(store, dirname, known=None):
                 if fn != "000-request.md": bad("the request MUST be named 000-request.md")
                 if fm.get("type") != "request": bad("filing 000 must be type=request")
             else:
-                if not f["party"]: bad("filename MUST be <NNN>-<party>-<label>.md")
+                if not f["party"]:
+                    bad(f"filename MUST be <NNN>-<party>-<label>.md, here "
+                        f"{f['num']}-{fm.get('from','<party>')}-"
+                        f"{fm.get('act') or fm.get('type','filing')}.md "
+                        f"(docket-new derives this; it is not meant to be typed)")
                 elif known and f["party"] not in known:
                     bad(f"filename party {f['party']!r} is not registered")
                 elif f["party"] != fm.get("from"):
@@ -385,14 +389,34 @@ def validate_docket(store, dirname, known=None):
             if par:
                 if not par.startswith(did + "/"): bad(f"parent {par!r} is not in this docket")
                 elif par not in ids:              bad(f"parent {par!r} names no filing in this docket")
-            try:
-                dt = datetime.datetime.strptime(fm.get("date",""), "%Y-%m-%dT%H:%M:%SZ")
-                if dt.replace(tzinfo=datetime.timezone.utc) > datetime.datetime.now(datetime.timezone.utc):
-                    warnings.append(f"{w}: date {fm['date']} is in the future")
-                if fm["date"].endswith("T00:00:00Z"):
-                    warnings.append(f"{w}: date {fm['date']} is exactly midnight — likely a placeholder")
-            except ValueError:
-                bad(f"date {fm.get('date')!r} is not RFC 3339 UTC")
+            # A plain calendar date is accepted alongside the full timestamp.
+            # Canonical order is (NNN, party) and explicitly does not use `date`
+            # (PROTOCOL §"Canonical order"), which already anticipates that "a
+            # party with no clock may emit a placeholder". Requiring a precision
+            # the party does not have produced exactly that: a fabricated
+            # midnight, which the warning below then flags. A date that says only
+            # what is known is the more truthful record (r010).
+            raw, dt = fm.get("date", ""), None
+            for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
+                try:
+                    dt = datetime.datetime.strptime(raw, fmt)
+                    break
+                except ValueError:
+                    pass
+            if dt is None:
+                bad(f"date {raw!r} is neither RFC 3339 UTC "
+                    f"(2026-08-29T15:41:00Z) nor a calendar date (2026-08-29)")
+            else:
+                now = datetime.datetime.now(datetime.timezone.utc)
+                # A plain date is compared by day: today's date is not "future".
+                future = (dt.date() > now.date() if len(raw) == 10 else
+                          dt.replace(tzinfo=datetime.timezone.utc) > now)
+                if future:
+                    warnings.append(f"{w}: date {raw} is in the future")
+                if raw.endswith("T00:00:00Z"):
+                    warnings.append(f"{w}: date {raw} is exactly midnight — "
+                                    f"likely a placeholder; write just the date "
+                                    f"if the time is not known")
         if errs:
             invalid.add(fn)
             errors.extend(f"{w}: {m}" for m in errs)

@@ -217,16 +217,27 @@ check("T13", "blocked on a party routes to it", blocked("y","codex") == "codex",
 shutil.rmtree(d)
 
 # ---- T14: the store resolves through MCP roots ----
-def roots_session(caps, answer, cwd, store_env="docket"):
-    """Drive a live server, answering a roots/list request if one arrives."""
-    env = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE=store_env)
+_empty_ws_dir = tempfile.mkdtemp(prefix="dk-nows-")
+_empty_ws = os.path.join(_empty_ws_dir, "workspaces")
+open(_empty_ws, "w").close()
+
+def roots_session(caps, answer, cwd, store_env="docket", tool="docket_list"):
+    """Drive a live server, answering a roots/list request if one arrives.
+
+    Pinned to an empty workspace allowlist. Without that the server reads the
+    developer's real config, and a machine that happens to trust a store makes
+    these checks pass or fail on local state rather than on the code.
+    """
+    env = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE=store_env,
+               DOCKET_WORKSPACES_FILE=_empty_ws)
     pr = subprocess.Popen(["python3", MCP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env, cwd=cwd)
     wr = lambda m: (pr.stdin.write(json.dumps(m) + "\n"), pr.stdin.flush())
     rd = lambda: json.loads(pr.stdout.readline())
     wr({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":caps}}); rd()
+    args = ({"slug":"s","title":"t","body":"b"} if tool == "docket_open" else {})
     wr({"jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"docket_list","arguments":{}}})
+        "params":{"name":tool,"arguments":args}})
     m, asked = rd(), False
     if m.get("method") == "roots/list":
         asked = True
@@ -245,17 +256,21 @@ check("T14", "resolves the store from a root", not is_err, out[:80])
 # a client with no roots capability must not be asked, and must not hang
 asked, out, is_err = roots_session({}, None, cwd=outside)
 check("T14", "never asks a client that lacks the capability", not asked, "asked anyway")
+# docket_open carries the message checks: since r007 docket_list degrades to the
+# trusted workspaces rather than erroring, so it can no longer prove this.
+asked, out, is_err = roots_session({}, None, cwd=outside, tool="docket_open")
 check("T14", "says what it tried instead of raising", is_err and "no docket store at" in out, out[:80])
 
 # a client that errors on roots/list must not hang either
 asked, out, is_err = roots_session({"roots":{}},
-    lambda i: {"jsonrpc":"2.0","id":i,"error":{"code":-32601,"message":"no"}}, cwd=outside)
+    lambda i: {"jsonrpc":"2.0","id":i,"error":{"code":-32601,"message":"no"}},
+    cwd=outside, tool="docket_open")
 check("T14", "survives a client that refuses roots", is_err and "no docket store at" in out, out[:80])
 
 # a working relative store must not pay for a round trip
 asked, out, is_err = roots_session({"roots":{}}, None, cwd=d)
 check("T14", "no roots round trip when cwd already works", not asked and not is_err, out[:60])
-shutil.rmtree(d); shutil.rmtree(outside)
+shutil.rmtree(d); shutil.rmtree(outside); shutil.rmtree(_empty_ws_dir)
 
 # ---- T15: workspace allowlist resolution and CLI ----
 d1 = fresh()
@@ -292,6 +307,265 @@ check("T15", "docket_list workspace=all runs without error",
       not out_all["result"]["isError"], str(out_all)[:80])
 
 shutil.rmtree(d1); shutil.rmtree(d2); shutil.rmtree(outside)
+
+# ---- T17: a client outside a store can still reach dockets by id (r007) ----
+# The id names exactly one store, so these calls were never ambiguous; the old
+# guard failed them on the client's cwd before the resolver ever ran.
+d1 = fresh()
+outside = tempfile.mkdtemp(prefix="dk-outside-")
+ws_cfg = os.path.join(outside, "workspaces")
+open(ws_cfg, "w").write(f"{d1}\n")
+env_ws = dict(os.environ, DOCKET_WORKSPACES_FILE=ws_cfg)
+
+def outside_call(name, args, party="claude"):
+    inp = "\n".join(json.dumps(x) for x in [INIT, tc(name, args)]) + "\n"
+    env = dict(env_ws, DOCKET_PARTY=party, DOCKET_STORE="docket")
+    pr = subprocess.run(["python3", MCP], input=inp, capture_output=True,
+                        text=True, cwd=outside, env=env)
+    r = next((m["result"] for m in (json.loads(l) for l in pr.stdout.splitlines()
+                                    if l.strip().startswith("{"))
+              if m.get("id") == 2), {})
+    return r.get("isError"), r.get("content", [{}])[0].get("text", "")
+
+subprocess.run(["python3", os.path.join(D, "tools", "docket-new"), "request",
+                "--store", os.path.join(d1, "docket"), "--from", "claude",
+                "--slug", "reach", "--title", "Reach", "--act", "task",
+                "--assignee", "claude"], input="b", capture_output=True, text=True)
+
+is_err, out = outside_call("docket_read", {"docket": "r001"})
+check("T17", "docket_read resolves by id from a non-store cwd", not is_err, out[:80])
+
+is_err, out = outside_call("docket_file", {"docket": "r001", "title": "t", "body": "b"})
+check("T17", "docket_file writes into the workspace that holds the docket",
+      not is_err and "filed" in out, out[:80])
+
+is_err, out = outside_call("docket_list", {})
+check("T17", "docket_list degrades to trusted workspaces, never errors",
+      not is_err and "r001-reach" in out, out[:80])
+
+# docket_open names no docket, so nothing disambiguates it. It must still refuse
+# -- a docket opened in the wrong store is a write no later filing can undo --
+# but the refusal has to name what it could have used.
+is_err, out = outside_call("docket_open", {"slug": "s", "title": "t", "body": "b"})
+check("T17", "docket_open still refuses without a store", is_err, out[:80])
+check("T17", "the refusal names the trusted workspaces",
+      os.path.basename(d1) in out, out[:120])
+
+is_err, out = outside_call("docket_read", {"docket": "r999"})
+check("T17", "an unresolvable id says where it looked",
+      is_err and "searched" in out, out[:80])
+shutil.rmtree(d1); shutil.rmtree(outside)
+
+# ---- T16: initialize carries standing guidance ----
+# The rules below cannot be enforced by a schema, so the only place they can
+# reach a party before its first write is the handshake. A host may ignore
+# instructions -- that is the spec's business -- but the server must send it.
+_, out, _ = server([INIT])
+res = next((m.get("result") for m in out if m.get("id") == 1), {}) or {}
+instr = res.get("instructions", "")
+check("T16", "initialize returns instructions", bool(instr.strip()),
+      f"keys={sorted(res)}")
+missing = [k for k in ("docket_list", "close", "erratum", "DOCKET_PARTY")
+           if k not in instr]
+check("T16", "instructions name the unenforceable rules", not missing,
+      f"absent: {missing}")
+# It enters every session of every party, so it is the one string here with an
+# unconditional context cost. PARTIES.md calls qwen the smallest window.
+check("T16", "instructions stay within a small budget", len(instr) < 2000,
+      f"{len(instr)} chars")
+
+# ---- T18: a docket owed by nobody is still reported to its owner (r008) ----
+# waiting_on says who can act now, correctly nobody for an external condition.
+# Before this, that meant the docket appeared in no queue at all and was found
+# only when a human remembered it.
+d = fresh()
+def dn(kind, **kw):
+    argv = ["python3", os.path.join(D, "tools", "docket-new"), kind,
+            "--store", os.path.join(d, "docket"), "--from", kw.pop("frm")]
+    for k, v in kw.items():
+        argv += [f"--{k.replace('_','-')}", v]
+    return subprocess.run(argv, input="b", capture_output=True, text=True).returncode
+
+dn("request", frm="claude", slug="blocked", title="Blocked", act="task", assignee="claude")
+dn("filing",  frm="claude", docket="r001", title="wait", act="report",
+   status="blocked", blocked_on="a fresh client session")
+dn("request", frm="claude", slug="unowned", title="Unowned", act="question")
+dn("filing",  frm="claude", docket="r002", title="more", act="report")
+dn("request", frm="claude", slug="active", title="Active", act="task", assignee="qwen")
+
+_, out_l, _ = server([INIT, tc("docket_list", {})], party="claude", cwd=d)
+listing = out_l[-1]["result"]["content"][0]["text"]
+
+check("T18", "blocked-on-a-condition reaches its assignee",
+      "assigned to you (claude) but waiting on nobody" in listing
+      and "r001-blocked" in listing.split("but waiting on nobody")[1],
+      listing.replace("\n", "|")[:150])
+check("T18", "an unassigned open docket is reported as unowned",
+      "no party has agreed to do these" in listing
+      and "r002-unowned" in listing.split("no party has agreed")[1],
+      listing.replace("\n", "|")[:150])
+# The existing queue must not absorb the new ones: a docket someone can act on
+# now is a different claim from one whose owner merely has to re-check it.
+waiting = listing.split("waiting on you (claude)")[1].split("\n\n")[0] \
+          if "waiting on you (claude)" in listing else ""
+check("T18", "an actionable docket stays out of the stalled section",
+      "r001-blocked" not in waiting and "r002-unowned" not in waiting,
+      waiting.replace("\n", "|")[:120])
+# r003 is assigned to and waiting on qwen. It belongs in the plain listing and
+# in none of the sections addressed to claude -- the new sections widen what a
+# party is told it owns, so this is the check that they did not widen it too far.
+main, _, sections = listing.partition("\n\n")
+check("T18", "another party's work is listed but never claimed",
+      "r003-active" in main and "r003-active" not in sections,
+      f"main={('r003-active' in main)} sections={('r003-active' in sections)}")
+shutil.rmtree(d)
+
+# ---- T19: a filing may say only what it knows about its date (r010) ----
+# Canonical order is (NNN, party) and does not use `date`, so the timestamp is
+# load-bearing for nothing. Requiring precision a party lacks produced a
+# fabricated midnight, which the lint then flagged as a placeholder.
+d = fresh()
+st = os.path.join(d, "docket")
+subprocess.run(["python3", os.path.join(D, "tools", "docket-new"), "request",
+                "--store", st, "--from", "claude", "--slug", "dates",
+                "--title", "Dates", "--act", "task"],
+               input="b", capture_output=True, text=True)
+dk = os.path.join(st, "r001-dates")
+
+def lint_of(name, date):
+    open(os.path.join(dk, name), "w").write(
+        f"---\nprotocol: docket/0.2\nid: r001/001-claude\ndocket: r001\n"
+        f"from: claude\ntype: filing\nact: answer\ndate: {date}\n---\n\n# T\n\nb\n")
+    r = subprocess.run(["python3", os.path.join(D, "tools", "docket-lint"), st],
+                       capture_output=True, text=True)
+    os.remove(os.path.join(dk, name))
+    return r.returncode, r.stdout
+
+rc, out = lint_of("001-claude-answer.md", "2026-08-29")
+check("T19", "a plain calendar date is valid", rc == 0, out.strip().splitlines()[-1])
+rc, out = lint_of("001-claude-answer.md", "2026-08-29T15:41:00Z")
+check("T19", "a full timestamp is still valid", rc == 0, out.strip().splitlines()[-1])
+rc, out = lint_of("001-claude-answer.md", "29/08/2026")
+check("T19", "a date in neither form is rejected", rc != 0, out.strip().splitlines()[-1])
+rc, out = lint_of("001-claude-answer.md", "2099-01-01")
+check("T19", "a future plain date still warns", "is in the future" in out, out[:80])
+
+# The filename rule stays -- 001-claude.md cannot be told from 001-answer.md --
+# but the error now names the file it should have been, since both halves are in
+# the front matter the party already wrote.
+rc, out = lint_of("001-claude.md", "2026-08-29")
+check("T19", "an ambiguous filename is still rejected", rc != 0, out[:80])
+check("T19", "the filename error names the file it should have been",
+      "001-claude-answer.md" in out, out[:160])
+shutil.rmtree(d)
+
+# ---- T20: the gate blames the commit, not the store (r011) ----
+# An invalid filing cannot be repaired -- errata cannot correct a filename and
+# rule 1 forbids a rename -- so a gate demanding a clean store is uninstallable
+# in the one repo that has already earned it.
+d = fresh()
+st = os.path.join(d, "docket")
+subprocess.run(["python3", os.path.join(D, "tools", "docket-new"), "request",
+                "--store", st, "--from", "claude", "--slug", "g", "--title", "G",
+                "--act", "task"], input="b", capture_output=True, text=True)
+dk = os.path.join(st, "r001-g")
+bad = os.path.join(dk, "001-claude.md")          # no <label>: invalid filename
+open(bad, "w").write("---\nprotocol: docket/0.2\nid: r001/001-claude\n"
+                     "docket: r001\nfrom: claude\ntype: filing\nact: answer\n"
+                     "date: 2026-08-30\n---\n\n# B\n\nb\n")
+
+def lint(*extra):
+    return subprocess.run(["python3", os.path.join(D, "tools", "docket-lint"), st,
+                           *extra], capture_output=True, text=True)
+
+r = lint()
+check("T20", "without --gate the store still fails", r.returncode == 1,
+      r.stdout.strip().splitlines()[-1])
+r = lint("--gate", bad)
+check("T20", "the commit that introduces it is blocked", r.returncode == 1,
+      r.stdout.strip().splitlines()[-1])
+r = lint("--gate", os.path.join(dk, "000-request.md"))
+check("T20", "a later commit elsewhere is not blamed for it", r.returncode == 0,
+      r.stdout.strip().splitlines()[-1])
+check("T20", "the pre-existing error is still reported", "ERROR" in r.stdout,
+      r.stdout[:80])
+r = lint("--gate")
+check("T20", "--gate with no paths gates nothing", r.returncode == 0,
+      r.stdout.strip().splitlines()[-1])
+
+# A docket-level fault is the other shape: adding a filing can cause it, so any
+# filing touched in that docket answers for it.
+dk2 = os.path.join(st, "r002-orphan"); os.makedirs(dk2)
+orph = os.path.join(dk2, "001-claude-answer.md")
+open(orph, "w").write("---\nprotocol: docket/0.2\nid: r002/001-claude\n"
+                      "docket: r002\nfrom: claude\ntype: filing\nact: answer\n"
+                      "date: 2026-08-30\n---\n\n# O\n\nb\n")
+r = lint("--gate", orph)
+check("T20", "a docket-level fault gates any filing in that docket",
+      r.returncode == 1 and "no 000-request" in r.stdout,
+      r.stdout.strip().splitlines()[-1])
+shutil.rmtree(d)
+
+# ---- T21: the reader discloses validity (r009) ----
+d = fresh()
+st = os.path.join(d, "docket")
+def mk(kind, **kw):
+    argv = ["python3", os.path.join(D, "tools", "docket-new"), kind,
+            "--store", st, "--from", kw.pop("frm")]
+    for k, v in kw.items():
+        argv += [f"--{k.replace('_','-')}", v]
+    return subprocess.run(argv, input="b", capture_output=True, text=True)
+
+# r001: open, holds a schema-invalid filing (no <label> in the filename)
+mk("request", frm="claude", slug="scar", title="Scar", act="task", assignee="claude")
+open(os.path.join(st, "r001-scar", "001-claude.md"), "w").write(
+    "---\nprotocol: docket/0.2\nid: r001/001-claude\ndocket: r001\nfrom: claude\n"
+    "type: filing\nact: answer\ndate: 2026-08-30\n---\n\n# Bad\n\nb\n")
+# r002: an authority violation -- well formed, counts, one attempt ignored
+mk("request", frm="claude", slug="auth", title="Auth", act="task", assignee="claude")
+open(os.path.join(st, "r002-auth", "001-qwen-answer.md"), "w").write(
+    "---\nprotocol: docket/0.2\nid: r002/001-qwen\ndocket: r002\nfrom: qwen\n"
+    "type: filing\nact: answer\nassignee: qwen\ndate: 2026-08-30\n---\n\n# V\n\nb\n")
+
+def read(dk):
+    _, out, _ = server([INIT, tc("docket_read", {"docket": dk})], party="claude", cwd=d)
+    return out[-1]["result"]["content"][0]["text"]
+
+scar = read("r001")
+check("T21", "an invalid filing is marked INVALID", "INVALID" in scar, scar[:80])
+check("T21", "the marker says it reached no derived state",
+      "excluded from this docket's derived state" in scar, scar[:80])
+check("T21", "the reason is attributed to the right filing",
+      scar.split("=== 001-claude.md ===")[1].count("filename MUST be") == 1
+      and "filename MUST be" not in scar.split("=== 001-claude.md ===")[0],
+      "reason landed on the wrong filing")
+
+viol = read("r002")
+# The trap: this filing counts. Calling it invalid would tell a reader to
+# discount part of the record.
+check("T21", "an authority violation is NOT called invalid",
+      "INVALID" not in viol, viol[-200:])
+check("T21", "a violation says the filing still stands",
+      "This filing counts" in viol and "may not set assignee" in viol, viol[-160:])
+check("T21", "a clean filing gets no validity note",
+      ">" not in read("r002").split("=== 000-request.md ===")[1].split("===")[0],
+      "annotated a clean filing")
+
+_, out_l, _ = server([INIT, tc("docket_list", {})], party="claude", cwd=d)
+listing = out_l[-1]["result"]["content"][0]["text"]
+check("T21", "docket_list flags an open docket holding an invalid filing",
+      "1 invalid filing" in listing, listing.replace("\n", "|")[:120])
+
+# A closed docket is not listed at all, so its scar needs its own section --
+# grandfathering (r011) must never mean hiding.
+mk("close", frm="claude", docket="r001", title="Done", status="resolved",
+   evidence="git:abc1234")
+_, out_c, _ = server([INIT, tc("docket_list", {})], party="claude", cwd=d)
+closed = out_c[-1]["result"]["content"][0]["text"]
+check("T21", "a scar in a closed docket is still reported",
+      "closed docket" in closed and "001-claude.md" in closed,
+      closed.replace("\n", "|")[:140])
+shutil.rmtree(d)
 
 # ---- report ----
 w = max(len(r[1]) for r in results)

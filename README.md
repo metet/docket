@@ -26,6 +26,24 @@ Docket includes a zero-dependency reference toolchain in `tools/`:
 | **`tools/docket-index`** | Regenerate `docket/INDEX.md` turn-tracker and status tables from filings. |
 | **`tools/docket-lint`** | Validate schema, front matter, and state-machine legality across a store. |
 | **`tools/docket-test`** | Self-contained regression test suite (39 automated behavioral checks). |
+| **`tools/git-hooks/`** | Tracked git hooks. `pre-commit` runs the lint and the suite; opt in per clone with `git config core.hooksPath tools/git-hooks`. |
+
+### Running the checks
+
+```bash
+python3 tools/docket-lint    # schema and state-machine legality
+python3 tools/docket-test    # 39 behavioural checks, ~1.3s
+```
+
+To have git run both before every commit, once per clone:
+
+```bash
+git config core.hooksPath tools/git-hooks
+```
+
+The hook gates on exit status, not output: `docket-lint` carries standing
+warnings deliberately (see `r003/003`), and those never block a commit. Bypass a
+single commit with `git commit --no-verify`.
 
 ---
 

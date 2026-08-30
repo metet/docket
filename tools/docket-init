@@ -187,13 +187,20 @@ Scaffolded by `docket-init` from {version()} on {datetime.date.today().isoformat
         print(f"  {m}")
     parties_path = f"{SOURCE}/PARTIES.md" if a.link else f"{a.store}/PARTIES.md"
     tool = f"{SOURCE}/tools/docket-new" if a.link else "tools/docket-new"
+    hooks = f"{SOURCE}/tools/git-hooks" if a.link else "tools/git-hooks"
     print(f"""
 Next:
   1. Edit {parties_path} so it lists the parties for THIS repository.
   2. Pre-authorise writes to {a.store}/ for each CLI, or every filing prompts.
      Qwen Code: .qwen/settings.json -> {{"tools": {{"approvalMode": "auto_edit"}}}}
   3. File the first docket:
-     {tool} request --from <you> --slug <slug> --title "..." --store {a.store}""")
+     {tool} request --from <you> --slug <slug> --title "..." --store {a.store}
+  4. Gate the store, if this repo uses git:
+     git config core.hooksPath {hooks}
+     Nothing stops a party writing a filing by hand, and a hand-written one is
+     invalid more often than not. This makes git check the store on commit.
+     Check first that core.hooksPath is unset -- setting it replaces the repo's
+     whole hooks directory, so an existing .git/hooks would stop firing.""")
 
 if __name__ == "__main__":
     main()
