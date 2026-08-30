@@ -67,6 +67,10 @@ TOOLS = [
        "body":     S("the filing, in Markdown"),
        "act":      {"type": "string", "enum": ["answer","objection","ack","review","report","erratum"]},
        "parent":   S("filing id this responds to, e.g. r004/000"),
+       "supersedes": S("with act: erratum — the filing id being corrected, "
+                       "e.g. r004/001-qwen. You may only correct your own."),
+       "corrects":   S("with act: erratum — comma-separated field names to "
+                       "correct; supply the new values as ordinary arguments"),
        "to":       S("comma-separated party names"),
        "assignee": S("party responsible for advancing it; claim an unclaimed "
                      "docket by filing act: ack with yourself as assignee"),
@@ -102,6 +106,7 @@ def run_new(kind, args):
     for flag, key in (("--slug","slug"), ("--docket","docket"), ("--act","act"),
                       ("--to","to"), ("--assignee","assignee"), ("--parent","parent"),
                       ("--refs","refs"), ("--evidence","evidence"),
+                      ("--supersedes","supersedes"), ("--corrects","corrects"),
                       ("--status","status"), ("--blocked-on","blocked_on")):
         v = args.get(key)
         if not v:

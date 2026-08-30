@@ -14,7 +14,8 @@ Body is read from stdin, or --body, or left as a stub.
 """
 import os, re, sys, argparse, datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from docket_lib import (parties, load, reduce_docket, ACTS, STATUSES, CURRENT, TERMINAL)
+from docket_lib import (parties, load, reduce_docket, ACTS, STATUSES, CURRENT,
+                        TERMINAL, CORRECTABLE)
 
 def die(msg):
     print(f"docket-new: {msg}", file=sys.stderr); sys.exit(2)
@@ -77,6 +78,7 @@ def main():
     p.add_argument("--slug"); p.add_argument("--docket"); p.add_argument("--label")
     p.add_argument("--act"); p.add_argument("--to"); p.add_argument("--assignee")
     p.add_argument("--parent"); p.add_argument("--status"); p.add_argument("--blocked-on")
+    p.add_argument("--supersedes", metavar="FILING_ID"); p.add_argument("--corrects", metavar="FIELDS")
     p.add_argument("--refs"); p.add_argument("--evidence"); p.add_argument("--body")
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
@@ -135,6 +137,25 @@ def main():
                     st["assignee"] is None and a.act == "ack" and a.assignee == a.frm):
                 die(f"{a.frm} may not set assignee on {did}; an unclaimed docket "
                     "is claimed with --act ack --assignee <yourself>")
+            # An erratum is checked here, at write time. docket-lint catches a
+            # malformed one too, but filings are immutable: by then the only
+            # remedy is another erratum correcting the correction.
+            if a.act == "erratum":
+                if not a.supersedes or not a.corrects:
+                    die("--act erratum requires --supersedes <filing id> "
+                        "and --corrects <field,...>")
+                tgt = next((f for f in filings if f["fm"].get("id") == a.supersedes), None)
+                if tgt is None:
+                    die(f"--supersedes {a.supersedes!r} names no filing in {did}")
+                if tgt["fm"].get("from") != a.frm:
+                    die(f"only {tgt['fm'].get('from')} may correct {a.supersedes}; "
+                        "file an objection instead")
+                bad = [f for f in (x.strip() for x in a.corrects.split(","))
+                       if f not in CORRECTABLE]
+                if bad:
+                    die(f"--corrects {bad} not correctable; allowed: {sorted(CORRECTABLE)}")
+            elif a.supersedes or a.corrects:
+                die("--supersedes and --corrects are only valid with --act erratum")
         if not re.match(r"^[a-z0-9][a-z0-9-]*$", label):
             die("--label must be lowercase letters, digits and hyphens")
         fn  = f"{nxt:03d}-{a.frm}-{label}.md"
@@ -142,7 +163,8 @@ def main():
 
     front = fm_lines({
         "protocol": CURRENT, "id": fid, "docket": did,
-        "parent": a.parent, "from": a.frm, "to": lst(a.to),
+        "parent": a.parent, "supersedes": a.supersedes, "corrects": lst(a.corrects),
+        "from": a.frm, "to": lst(a.to),
         "type": typ, "act": a.act, "status": status,
         "assignee": a.assignee, "blocked_on": a.blocked_on,
         "refs": lst(a.refs), "evidence": lst(a.evidence), "date": now,
