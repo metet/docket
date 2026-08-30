@@ -24,6 +24,14 @@ STORE    = os.environ.get("DOCKET_STORE", "docket")
 PROTOCOL = "2024-11-05"
 sys.path.insert(0, HERE)
 
+# Set from the client's initialize. A roots/list request to a client that never
+# answers would hang this process forever, so it is only ever sent to a client
+# that declared the capability.
+CLIENT_ROOTS = False
+_pending = []        # client messages read while awaiting a server->client reply
+_rpc_id  = 0
+_store   = None      # resolved lazily, then cached
+
 def log(*a):                      # stdout is the protocol channel; never print there
     print(*a, file=sys.stderr, flush=True)
 
@@ -34,6 +42,62 @@ def ok(i, result):  send({"jsonrpc": "2.0", "id": i, "result": result})
 def err(i, code, m): send({"jsonrpc": "2.0", "id": i, "error": {"code": code, "message": m}})
 def text(s, is_error=False):
     return {"content": [{"type": "text", "text": s}], "isError": is_error}
+
+def client_request(method, params=None):
+    """Send a server->client request and wait for its response.
+
+    The main loop and this share one stdin, so anything read here that is not
+    the reply is queued for the loop rather than dropped.
+    """
+    global _rpc_id
+    _rpc_id += 1
+    rid = f"srv-{_rpc_id}"
+    send({"jsonrpc": "2.0", "id": rid, "method": method, **({"params": params} if params else {})})
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            return None                      # client went away
+        if not line.strip():
+            continue
+        try:
+            m = json.loads(line)
+        except json.JSONDecodeError:
+            _pending.append(line); continue
+        if isinstance(m, dict) and m.get("id") == rid:
+            return m.get("result")           # None when the client errored
+        _pending.append(line)
+
+def store():
+    """The store path, resolved once.
+
+    DOCKET_STORE is relative by design: it names the store inside whichever
+    repository the client is working in, so one registration serves every repo.
+    Resolving it against this process's cwd was wrong — the cwd is the client's,
+    which for an editor or a session started elsewhere is not the repository at
+    all, and every call failed with FileNotFoundError.
+
+    Ask the client where its workspace actually is. An absolute DOCKET_STORE
+    bypasses this entirely, and a relative one that already resolves is used as
+    is, so a working setup never pays for the round trip.
+    """
+    global _store
+    if _store is not None:
+        return _store
+    if os.path.isabs(STORE) or os.path.isdir(STORE):
+        _store = STORE
+        return _store
+    if CLIENT_ROOTS:
+        roots = client_request("roots/list") or {}
+        for r in roots.get("roots") or []:
+            uri = r.get("uri") or ""
+            path = uri[7:] if uri.startswith("file://") else uri
+            cand = os.path.join(path, STORE)
+            if os.path.isdir(cand):
+                log(f"docket-mcp: store resolved via roots -> {cand}")
+                _store = cand
+                return _store
+    _store = STORE                            # unresolved; fail with a real path
+    return _store
 
 S = lambda d="": {"type": "string", **({"description": d} if d else {})}
 
@@ -144,7 +208,7 @@ def run_new(kind, args):
     if not PARTY:
         return text("DOCKET_PARTY is not set, so this server has no identity. "
                     "Re-register it with -e DOCKET_PARTY=<your party name>.", True)
-    argv = ["python3", NEW, kind, "--store", STORE, "--from", PARTY,
+    argv = ["python3", NEW, kind, "--store", store(), "--from", PARTY,
             "--title", args["title"]]
     for flag, key in (("--slug","slug"), ("--docket","docket"), ("--act","act"),
                       ("--to","to"), ("--assignee","assignee"), ("--parent","parent"),
@@ -165,7 +229,7 @@ def run_new(kind, args):
     if p.returncode != 0:
         return text((p.stderr or p.stdout).strip() or "docket-new failed", True)
     path = p.stdout.strip()
-    subprocess.run(["python3", os.path.join(HERE, "docket-index"), STORE],
+    subprocess.run(["python3", os.path.join(HERE, "docket-index"), store()],
                    capture_output=True, text=True)
     return text(f"filed {path}")
 
@@ -175,10 +239,23 @@ def call(name, args):
     if miss:
         return text(f"{name}: missing required argument"
                     f"{'s' if len(miss) > 1 else ''}: {', '.join(miss)}", True)
+    # docket_protocol can answer from the source tree, so it needs no store.
+    if name != "docket_protocol" and not os.path.isdir(store()):
+        return text(
+            f"no docket store at {os.path.abspath(store())!r}.\n"
+            f"DOCKET_STORE={STORE!r} is relative and this server's working "
+            f"directory is {os.getcwd()!r}.\n"
+            + ("The client offered no workspace root — it did not declare the "
+               "roots capability.\n" if not CLIENT_ROOTS else
+               "No workspace root the client offered contains it.\n")
+            + "Fix by one of: run the client from the repository; set "
+              "DOCKET_STORE to an absolute path; or scaffold a store there with "
+              "docket-init.", True)
     if name == "docket_list":
         rows, mine = [], []
-        for d in dockets(STORE):
-            _, _, _, _, st = validate_docket(STORE, d)
+        st_path = store()
+        for d in dockets(st_path):
+            _, _, _, _, st = validate_docket(st_path, d)
             if st["status"] in ("resolved", "withdrawn"):
                 continue
             row = (f"{d}  status={st['status']}  assignee={st['assignee'] or '-'}  "
@@ -196,14 +273,15 @@ def call(name, args):
         return text(out)
     if name == "docket_read":
         did = args["docket"].split("-")[0]
-        for d in dockets(STORE):
+        st_path = store()
+        for d in dockets(st_path):
             if d.split("-")[0] == did:
                 out = []
                 # Errata are what docket-lint and docket-index reduce against.
                 # Reading raw text alone showed a superseded value as if it were
                 # current. The filing is immutable, so it is shown as written and
                 # the correction is stated under it rather than edited into it.
-                for f in apply_errata(load(os.path.join(STORE, d))):
+                for f in apply_errata(load(os.path.join(st_path, d))):
                     block = f"=== {f['fn']} ===\n{f['text']}"
                     if f.get("corrected"):
                         block += "\n> corrected by a later erratum:\n" + "\n".join(
@@ -211,9 +289,9 @@ def call(name, args):
                             for k in sorted(f["corrected"]))
                     out.append(block)
                 return text("\n\n".join(out))
-        return text(f"no docket {did} in {STORE}/", True)
+        return text(f"no docket {did} in {st_path}/", True)
     if name == "docket_protocol":
-        for cand in (os.path.join(STORE, "PROTOCOL.md"), os.path.join(HERE, "..", "PROTOCOL.md")):
+        for cand in (os.path.join(store(), "PROTOCOL.md"), os.path.join(HERE, "..", "PROTOCOL.md")):
             if os.path.exists(cand):
                 t = read(cand)
                 i = t.find("## 1.")
@@ -225,8 +303,17 @@ def call(name, args):
     return text(f"unknown tool {name}", True)
 
 def main():
+    global CLIENT_ROOTS, _store
     log(f"docket-mcp: party={PARTY or '(unset)'} store={STORE}")
-    for line in sys.stdin:
+    while True:
+        # Anything client_request read while waiting for its reply is handled
+        # here first, so a roots round trip never swallows a tool call.
+        if _pending:
+            line = _pending.pop(0)
+        else:
+            line = sys.stdin.readline()
+            if not line:
+                break
         if not line.strip():
             continue
         try:
@@ -243,8 +330,13 @@ def main():
         method, mid = m.get("method"), m.get("id")
         try:
             if method == "initialize":
+                caps = ((m.get("params") or {}).get("capabilities") or {})
+                CLIENT_ROOTS = "roots" in caps
+                log(f"docket-mcp: client roots capability = {CLIENT_ROOTS}")
                 ok(mid, {"protocolVersion": PROTOCOL, "capabilities": {"tools": {}},
                          "serverInfo": {"name": "docket", "version": "0.2"}})
+            elif method == "notifications/roots/list_changed":
+                _store = None                # re-resolve against the new roots
             elif method in ("notifications/initialized", "notifications/cancelled"):
                 pass
             elif method == "ping":

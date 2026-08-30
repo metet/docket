@@ -216,6 +216,47 @@ check("T13", "external condition routes to nobody", blocked("x","upstream CI is 
 check("T13", "blocked on a party routes to it", blocked("y","codex") == "codex", "")
 shutil.rmtree(d)
 
+# ---- T14: the store resolves through MCP roots ----
+def roots_session(caps, answer, cwd, store_env="docket"):
+    """Drive a live server, answering a roots/list request if one arrives."""
+    env = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE=store_env)
+    pr = subprocess.Popen(["python3", MCP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env, cwd=cwd)
+    wr = lambda m: (pr.stdin.write(json.dumps(m) + "\n"), pr.stdin.flush())
+    rd = lambda: json.loads(pr.stdout.readline())
+    wr({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":caps}}); rd()
+    wr({"jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"docket_list","arguments":{}}})
+    m, asked = rd(), False
+    if m.get("method") == "roots/list":
+        asked = True
+        wr(answer(m["id"])); m = rd()
+    pr.stdin.close(); pr.wait(timeout=20)
+    return asked, m["result"]["content"][0]["text"], m["result"]["isError"]
+
+d = fresh()
+outside = tempfile.mkdtemp(prefix="dk-cwd-")   # a cwd with no store, like an editor's
+asked, out, is_err = roots_session({"roots":{"listChanged":True}},
+    lambda i: {"jsonrpc":"2.0","id":i,"result":{"roots":[{"uri":"file://"+d,"name":"r"}]}},
+    cwd=outside)
+check("T14", "asks the client for roots when the store is missing", asked, "no roots/list sent")
+check("T14", "resolves the store from a root", not is_err, out[:80])
+
+# a client with no roots capability must not be asked, and must not hang
+asked, out, is_err = roots_session({}, None, cwd=outside)
+check("T14", "never asks a client that lacks the capability", not asked, "asked anyway")
+check("T14", "says what it tried instead of raising", is_err and "no docket store at" in out, out[:80])
+
+# a client that errors on roots/list must not hang either
+asked, out, is_err = roots_session({"roots":{}},
+    lambda i: {"jsonrpc":"2.0","id":i,"error":{"code":-32601,"message":"no"}}, cwd=outside)
+check("T14", "survives a client that refuses roots", is_err and "no docket store at" in out, out[:80])
+
+# a working relative store must not pay for a round trip
+asked, out, is_err = roots_session({"roots":{}}, None, cwd=d)
+check("T14", "no roots round trip when cwd already works", not asked and not is_err, out[:60])
+shutil.rmtree(d); shutil.rmtree(outside)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0
