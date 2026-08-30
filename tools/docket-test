@@ -830,6 +830,198 @@ check("T24", "docket-new no longer accepts --to",
       "--to was accepted")
 shutil.rmtree(d)
 
+# ---- T25: docket_open can name a trusted workspace, and only a trusted one (r018) ----
+# The defect: no_store_msg told the caller to "pick one deliberately" and
+# docket_open had no parameter to pick with, so the one tool that reaches that
+# message was the one tool that could not act on it.
+import time
+d_a   = fresh()                                   # a workspace with a store
+d_b   = fresh()                                   # a second one, for the override
+coll  = tempfile.mkdtemp(prefix="dk-coll-")       # two workspaces, one basename
+c1    = os.path.join(coll, "one", "proj"); os.makedirs(c1)
+c2    = os.path.join(coll, "two", "proj"); os.makedirs(c2)
+for c in (c1, c2):
+    subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), c],
+                   capture_output=True, text=True)
+bare  = tempfile.mkdtemp(prefix="dk-bare-")       # registered, but has no store
+unreg = tempfile.mkdtemp(prefix="dk-unreg-")      # a real store nobody registered
+subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), unreg],
+               capture_output=True, text=True)
+outside = tempfile.mkdtemp(prefix="dk-outside-")
+ws_cfg  = os.path.join(outside, "workspaces")
+open(ws_cfg, "w").write("\n".join([d_a, d_b, c1, c2, bare]) + "\n")
+
+def ws_open(args, cwd, party="claude"):
+    """docket_open from `cwd`, with the collision registry in force."""
+    inp = "\n".join(json.dumps(x) for x in [INIT, tc("docket_open", args)]) + "\n"
+    env = dict(os.environ, DOCKET_PARTY=party, DOCKET_STORE="docket",
+               DOCKET_WORKSPACES_FILE=ws_cfg)
+    pr = subprocess.run(["python3", MCP], input=inp, capture_output=True,
+                        text=True, cwd=cwd, env=env)
+    r = next((m["result"] for m in (json.loads(l) for l in pr.stdout.splitlines()
+                                    if l.strip().startswith("{"))
+              if m.get("id") == 2), None)
+    return (r["content"][0]["text"], r["isError"]) if r else ("<no result>", True)
+
+def filed_slugs(root):
+    st_ = os.path.join(root, "docket")
+    return sorted(x for x in os.listdir(st_) if os.path.isdir(os.path.join(st_, x))
+                  and not x.startswith("."))
+
+base = dict(title="t", body="b", act="question")
+
+# 1. by registered name, from a cwd that has no store of its own
+out, is_err = ws_open(dict(base, slug="by-name", workspace=os.path.basename(d_a)), outside)
+check("T25", "workspace= by registered name opens from outside any store",
+      not is_err and "filed " in out, out[:90])
+check("T25", "the filing lands in the named workspace",
+      any("by-name" in x for x in filed_slugs(d_a)), str(filed_slugs(d_a)))
+
+# 2. by exact registered path -- the disambiguator for a basename collision
+out, is_err = ws_open(dict(base, slug="by-path", workspace=c2), outside)
+check("T25", "workspace= by exact registered path resolves",
+      not is_err and "filed " in out, out[:90])
+check("T25", "the exact path picks that workspace, not its namesake",
+      any("by-path" in x for x in filed_slugs(c2))
+      and not any("by-path" in x for x in filed_slugs(c1)),
+      f"c1={filed_slugs(c1)} c2={filed_slugs(c2)}")
+
+# 3. an explicit selector must beat a store that resolves locally
+out, is_err = ws_open(dict(base, slug="override", workspace=os.path.basename(d_b)), d_a)
+check("T25", "workspace= overrides a perfectly good local store",
+      not is_err and any("override" in x for x in filed_slugs(d_b))
+      and not any("override" in x for x in filed_slugs(d_a)),
+      f"a={filed_slugs(d_a)} b={filed_slugs(d_b)}")
+
+# 4. ambiguity is refused, never resolved by registry order
+out, is_err = ws_open(dict(base, slug="ambig", workspace="proj"), outside)
+check("T25", "an ambiguous basename is refused", is_err, out[:90])
+check("T25", "the refusal shows both candidate paths",
+      c1 in out and c2 in out, out[:140])
+
+# 5. unknown, unregistered, and store-less selectors
+out, is_err = ws_open(dict(base, slug="unknown", workspace="nope"), outside)
+check("T25", "an unknown selector is refused and lists the valid ones",
+      is_err and "not a trusted workspace" in out and "Valid workspace selectors" in out,
+      out[:110])
+out, is_err = ws_open(dict(base, slug="unreg", workspace=unreg), outside)
+check("T25", "a real store at an unregistered path is still refused",
+      is_err and not os.path.isdir(os.path.join(unreg, "docket", "r001-unreg")),
+      out[:110])
+out, is_err = ws_open(dict(base, slug="bare", workspace=os.path.basename(bare)), outside)
+check("T25", "a registered workspace with no store says so", is_err and "no docket store" in out,
+      out[:110])
+
+# 6. without a selector, nothing changes: still refuse, but now say what to pass
+out, is_err = ws_open(dict(base, slug="no-sel"), outside)
+check("T25", "no selector outside a store is still refused", is_err, out[:90])
+check("T25", "the refusal names the parameter that resolves it",
+      "workspace=" in out, out[:140])
+
+# 7. a slug containing a slash is not a workspace qualifier and never was
+out, is_err = ws_open(dict(base, slug="mindmap/qualified", workspace=os.path.basename(d_a)), outside)
+check("T25", "a slash in slug is not parsed as a workspace",
+      not any(x == "mindmap" for x in filed_slugs(d_a)), str(filed_slugs(d_a)))
+
+for x in (d_a, d_b, coll, bare, unreg, outside):
+    shutil.rmtree(x)
+
+# ---- T26: the three version axes stay independent (r019) ----
+# serverInfo is MCP implementation metadata, not the filing format. Deriving one
+# from the other would call every filing-format bump an MCP release.
+sys.path.insert(0, HERE)
+import importlib.util as _iu, importlib.machinery as _im
+_spec = _iu.spec_from_loader("dmcp", _im.SourceFileLoader("dmcp", MCP))
+_mcp = _iu.module_from_spec(_spec)
+_spec.loader.exec_module(_mcp)          # name is not __main__, so main() stays put
+rc, out26, _ = server([INIT])
+info = next((m["result"]["serverInfo"] for m in out26 if m.get("id") == 1), {})
+check("T26", "initialize reports the server's own version",
+      info.get("version") == _mcp.SERVER_VERSION, str(info))
+check("T26", "serverInfo is no longer the stale 0.2", info.get("version") != "0.2", str(info))
+check("T26", "the MCP wire version is unchanged and separate",
+      _mcp.MCP_PROTOCOL_VERSION == "2024-11-05"
+      and next((m["result"]["protocolVersion"] for m in out26 if m.get("id") == 1), None)
+          == "2024-11-05", _mcp.MCP_PROTOCOL_VERSION)
+check("T26", "the server version is not tied to the filing format",
+      _mcp.SERVER_VERSION != _L.CURRENT, f"{_mcp.SERVER_VERSION} vs {_L.CURRENT}")
+
+# ---- T27: an unresolved store is re-tried, not memoised (r020) ----
+# One process, cwd fixed throughout -- the report's premise was that cwd changes
+# under a running server, which cannot happen to an already-spawned stdio child.
+# The real defect is that store() cached its own failure, so a resolution that
+# only becomes possible later is never seen.
+#
+# The cwd is a subdirectory of the workspace, so the relative DOCKET_STORE never
+# resolves from it and only the trusted registry can succeed. That matters: an
+# earlier version of this test put the cwd at the workspace root, where the
+# memoised relative "docket" starts working again by itself as soon as the
+# directory exists -- and the test passed against the unfixed code.
+late = tempfile.mkdtemp(prefix="dk-late-")
+subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), late],
+               capture_output=True, text=True)
+sub27 = os.path.join(late, "sub"); os.makedirs(sub27)
+cfg27 = os.path.join(late, "workspaces"); open(cfg27, "w").write("")
+env27 = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE="docket",
+             DOCKET_WORKSPACES_FILE=cfg27)
+proc = subprocess.Popen(["python3", MCP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, text=True, cwd=sub27, env=env27)
+def rpc27(msg):
+    proc.stdin.write(json.dumps(msg) + "\n"); proc.stdin.flush()
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            return None
+        if line.strip().startswith("{"):
+            m = json.loads(line)
+            if m.get("id") == msg.get("id"):
+                return m
+rpc27(INIT)
+r_miss = rpc27(tc("docket_open", dict(base, slug="too-early"), i=2))
+check("T27", "with nothing registered, the first open is refused",
+      r_miss is not None and r_miss["result"]["isError"], str(r_miss)[:100])
+open(cfg27, "w").write(late + "\n")          # registered while the server runs
+r_hit = rpc27(tc("docket_open", dict(base, slug="after-register"), i=3))
+proc.stdin.close(); proc.wait(timeout=10)
+check("T27", "a workspace registered after the first miss is picked up in-process",
+      r_hit is not None and not r_hit["result"]["isError"],
+      str(r_hit)[:120] if r_hit else "no reply")
+check("T27", "and the filing really lands in that store",
+      any("after-register" in x for x in os.listdir(os.path.join(late, "docket"))),
+      str(os.listdir(os.path.join(late, "docket"))))
+shutil.rmtree(late)
+
+# ---- T28: a failed reindex warns inside a successful filing (r021) ----
+# Reporting isError here would invite a retry, and the retry writes a second
+# immutable filing. INDEX.md is replaced by a directory so docket-index cannot
+# open it for writing and exits non-zero.
+d28 = fresh()
+st28 = os.path.join(d28, "docket")
+idx28 = os.path.join(st28, "INDEX.md")
+if os.path.exists(idx28):
+    os.remove(idx28)
+os.makedirs(idx28)
+inp28 = "\n".join(json.dumps(x) for x in
+                  [INIT, tc("docket_open", dict(base, slug="index-broken"))]) + "\n"
+pr28 = subprocess.run(["python3", MCP], input=inp28, capture_output=True, text=True,
+                      cwd=d28, env=dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE="docket"))
+r28 = next((m["result"] for m in (json.loads(l) for l in pr28.stdout.splitlines()
+                                  if l.strip().startswith("{")) if m.get("id") == 2), None)
+t28 = r28["content"][0]["text"] if r28 else "<none>"
+check("T28", "a failed reindex is not reported as a failed call",
+      r28 is not None and not r28["isError"], t28[:100])
+check("T28", "the response still names the saved filing", "filed " in t28, t28[:100])
+check("T28", "it warns that INDEX.md is stale",
+      "INDEX.md was not regenerated" in t28, t28[:160])
+check("T28", "it carries the indexer's own diagnostic",
+      "IsADirectoryError" in t28 or "Error" in t28, t28[:200])
+check("T28", "it names the repair command, not just the failure",
+      "docket-index" in t28 and "Repair it with" in t28, t28[:200])
+check("T28", "exactly one filing was written, so no retry duplicates it",
+      len([x for x in os.listdir(st28) if x.startswith("r001")]) == 1,
+      str(os.listdir(st28)))
+shutil.rmtree(d28)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0

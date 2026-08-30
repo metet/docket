@@ -21,7 +21,14 @@ HERE     = os.path.dirname(os.path.abspath(__file__))
 NEW      = os.path.join(HERE, "docket-new")
 PARTY    = os.environ.get("DOCKET_PARTY", "")
 STORE    = os.environ.get("DOCKET_STORE", "docket")
-PROTOCOL = "2024-11-05"
+# Three separate version axes, kept apart because they skew independently
+# (r019, codex). MCP_PROTOCOL_VERSION is the wire protocol; SERVER_VERSION is
+# this implementation, which is what the MCP schema means by serverInfo; and
+# docket_lib.CURRENT is the persisted filing format. Deriving serverInfo from
+# CURRENT would claim every filing-format bump is an MCP release and would
+# miss MCP-only changes that deserve their own.
+MCP_PROTOCOL_VERSION = "2024-11-05"
+SERVER_VERSION       = "0.3.0"
 sys.path.insert(0, HERE)
 
 # Set from the client's initialize. A roots/list request to a client that never
@@ -30,7 +37,8 @@ sys.path.insert(0, HERE)
 CLIENT_ROOTS = False
 _pending = []        # client messages read while awaiting a server->client reply
 _rpc_id  = 0
-_store   = None      # resolved lazily, then cached
+_store   = None      # resolved lazily; only a successful resolution is cached
+_roots_asked = False # the roots round trip is made at most once per roots set
 
 def log(*a):                      # stdout is the protocol channel; never print there
     print(*a, file=sys.stderr, flush=True)
@@ -68,7 +76,7 @@ def client_request(method, params=None):
         _pending.append(line)
 
 def store():
-    """The store path, resolved once.
+    """The store path. A successful resolution is cached; a failure is not.
 
     DOCKET_STORE is relative by design: it names the store inside whichever
     repository the client is working in, so one registration serves every repo.
@@ -81,8 +89,16 @@ def store():
     2. Check trusted workspaces in ~/.config/docket/workspaces: if this process's
        cwd is inside a registered workspace, resolve to <workspace>/<STORE>.
     3. If the client declared the roots capability, ask the client for roots.
+
+    Steps 1 and 2 are pure local checks and are re-tried on every call, which is
+    what makes not caching a failure safe. Step 3 is a synchronous round trip to
+    the client and is made at most once per roots set: re-asking on every call
+    turned one unresolved store into a request per tool call, and against a
+    client that answers roots/list with an error it consumed the reply the
+    pending tool call was waiting for, so the call never returned at all
+    (caught by T14 "survives a client that refuses roots").
     """
-    global _store
+    global _store, _roots_asked
     if _store is not None:
         return _store
     if os.path.isabs(STORE) or os.path.isdir(STORE):
@@ -96,7 +112,8 @@ def store():
             log(f"docket-mcp: store resolved via trusted workspace -> {cand}")
             _store = cand
             return _store
-    if CLIENT_ROOTS:
+    if CLIENT_ROOTS and not _roots_asked:
+        _roots_asked = True
         roots = client_request("roots/list") or {}
         for r in roots.get("roots") or []:
             uri = r.get("uri") or ""
@@ -106,8 +123,13 @@ def store():
                 log(f"docket-mcp: store resolved via roots -> {cand}")
                 _store = cand
                 return _store
-    _store = STORE                            # unresolved; fail with a real path
-    return _store
+    # Deliberately not cached (r020). Memoizing the failure pinned the process
+    # to it for life: a store scaffolded after the first miss, a workspace added
+    # to the registry while the server runs, or a pre-initialize call that beat
+    # CLIENT_ROOTS being set would never be seen, and re-trying costs two isdir
+    # checks and a registry read. Only a resolution that succeeded is worth
+    # remembering.
+    return STORE                              # unresolved; fail with a real path
 
 def workspace_store(ws):
     """Find the docket store directory inside a given workspace path.
@@ -172,7 +194,10 @@ TOOLS = [
        "assignee": S("party responsible for advancing it"),
        "status":   {"type": "string", "enum": ["open", "resolved"],
                     "description": "defaults to open, or resolved for act: report. "
-                                   "Set open on a report that does need a reply."}},
+                                   "Set open on a report that does need a reply."},
+       "workspace": S("optional: open this in another trusted workspace, by its "
+                      "registered name or exact registered path. Overrides the "
+                      "local store; must already be trusted.")},
     "required": ["slug", "title", "body"]},
    "annotations": A("Open a docket", read_only=False, destructive=False)},
   {"name": "docket_file",
@@ -318,6 +343,48 @@ def trusted_stores():
             if os.path.isdir(workspace_store(w))]
 
 
+def selectors_msg():
+    """The valid values for workspace=, as registered names and their paths."""
+    ws = trusted_stores()
+    if not ws:
+        return "No trusted workspace holds a store.\n"
+    return ("Valid workspace selectors:\n"
+            + "".join(f"  {n}  ({w})\n" for n, w in ws))
+
+
+def resolve_workspace(sel):
+    """An explicit selector -> (store_path, None) or (None, message).
+
+    Accepts a unique registered basename, or the exact path of a registered
+    workspace -- and nothing else (r018, codex). An arbitrary path would let a
+    caller name a repository nobody registered, and the trusted-workspaces
+    registry is the only gate this server has on where an immutable filing
+    lands. Basenames are the ergonomic form but are ambiguous by construction,
+    since trusted_stores() reports them bare, so a collision is refused rather
+    than resolved by registry order -- which would make the target depend on
+    the order of lines in an unrelated config file.
+    """
+    from docket_lib import load_workspaces
+    sel = (sel or "").strip()
+    if not sel:
+        return None, ("workspace was given but empty.\n" + selectors_msg())
+    wss = load_workspaces()
+    exact = [w for w in wss if os.path.abspath(w) == os.path.abspath(sel)]
+    hits = exact or [w for w in wss if os.path.basename(w) == sel]
+    if not hits:
+        return None, (f"{sel!r} is not a trusted workspace.\n" + selectors_msg()
+                      + "Add it with 'docket-workspace add <path>' if it should be.")
+    if len(hits) > 1:
+        return None, (f"{sel!r} names {len(hits)} trusted workspaces:\n"
+                      + "".join(f"  {w}\n" for w in hits)
+                      + "Pass the exact path of the one you mean.")
+    cand = workspace_store(hits[0])
+    if not os.path.isdir(cand):
+        return None, (f"trusted workspace {hits[0]!r} has no docket store "
+                      f"(looked for {cand!r}).\nScaffold one with docket-init.")
+    return cand, None
+
+
 def no_store_msg():
     """Why there is no store here, and what may be used instead.
 
@@ -325,6 +392,10 @@ def no_store_msg():
     reaches this message, and opening a docket in the wrong store is a write no
     later filing can take back -- filings are immutable, so a guess is not
     something the next party can correct.
+
+    It must also name the parameter that resolves it. Before r018 it said "pick
+    one deliberately" to a caller who had nothing to pick with, which reads as a
+    defect rather than a decision.
     """
     msg = (f"no docket store at {os.path.abspath(store())!r}.\n"
            f"DOCKET_STORE={STORE!r} is relative and this server's working "
@@ -336,9 +407,12 @@ def no_store_msg():
     if ws:
         msg += ("Trusted workspaces that do have one:\n"
                 + "".join(f"  {n}  ({w})\n" for n, w in ws)
-                + "Pick one deliberately -- this tool will not guess, because a "
-                  "docket opened in the wrong store cannot be withdrawn by "
-                  "anyone but its requester.\n")
+                + "Pass workspace=<name-or-registered-path> to pick one.\n"
+                  "This tool will not guess, and will not select the sole entry "
+                  "when only one is listed: a docket opened in the wrong store "
+                  "cannot be withdrawn by anyone but its requester, and which "
+                  "entries the registry happens to hold is unrelated "
+                  "configuration.\n")
     return msg + ("Fix by one of: add this folder with 'docket-workspace add "
                   "<path>'; run the client from the repository; set DOCKET_STORE "
                   "to an absolute path; or scaffold a store there with docket-init.")
@@ -355,15 +429,20 @@ def unresolved_docket_msg(arg):
             "repository reachable.")
 
 
-def run_new(kind, args):
+def run_new(kind, args, target=None):
     from docket_lib import quote_flow
     """Every write goes through docket-new: one implementation, no drift.
-    argv is built as a list, so no argument can inject a flag."""
+    argv is built as a list, so no argument can inject a flag.
+
+    `target` is a store already resolved from an explicit workspace selector.
+    It wins over local resolution, including over a local store that resolves
+    fine: naming the workspace is the caller saying where this goes, which is
+    the entire point of the parameter (r018)."""
     if not PARTY:
         return text("DOCKET_PARTY is not set, so this server has no identity. "
                     "Re-register it with -e DOCKET_PARTY=<your party name>.", True)
-    target_store = store()
-    if args.get("docket"):
+    target_store = target or store()
+    if target is None and args.get("docket"):
         found_st, _ = find_docket_store(args["docket"])
         if found_st:
             target_store = found_st
@@ -388,8 +467,23 @@ def run_new(kind, args):
     if p.returncode != 0:
         return text((p.stderr or p.stdout).strip() or "docket-new failed", True)
     path = p.stdout.strip()
-    subprocess.run(["python3", os.path.join(HERE, "docket-index"), target_store],
-                   capture_output=True, text=True)
+    # docket-new returned 0, so the filing is on disk and immutable. A failed
+    # reindex must not be reported as a failed call: the caller's correct
+    # response to "failed" is to file again, and that leaves a duplicate nobody
+    # can delete. Warn inside the success instead, and name the repair command
+    # rather than only the fact -- NFR-7, qwen has to act on this without first
+    # deducing that docket-index is a runnable script (r021).
+    idx = subprocess.run(["python3", os.path.join(HERE, "docket-index"), target_store],
+                         capture_output=True, text=True)
+    if idx.returncode != 0:
+        diag = (idx.stderr or idx.stdout).strip().splitlines()
+        return text(f"filed {path}\n"
+                    f"warning: the filing is saved, but INDEX.md was not "
+                    f"regenerated (docket-index exited {idx.returncode}). "
+                    f"Do not file it again.\n"
+                    + "".join(f"  {ln}\n" for ln in diag[-5:])
+                    + f"Repair it with: python3 "
+                      f"{os.path.join(HERE, 'docket-index')} {target_store}")
     return text(f"filed {path}")
 
 def attribute(dirname, filings, msgs):
@@ -540,7 +634,11 @@ def call(name, args):
         return call(name, dict(args, workspace="all"))
     # docket_open names no docket, so nothing disambiguates it. docket_protocol
     # answers from the source tree and needs no store at all.
-    elif name not in ("docket_protocol", "docket_list") and not os.path.isdir(store()):
+    # An explicit workspace= on docket_open names the target itself, so the
+    # absence of a local store is no obstacle: that selector is precisely the
+    # deliberate pick this message asks for (r018).
+    elif name not in ("docket_protocol", "docket_list") and not os.path.isdir(store()) \
+            and not (name == "docket_open" and args.get("workspace")):
         return text(no_store_msg(), True)
     if name == "docket_list":
         from docket_lib import load_workspaces
@@ -597,12 +695,17 @@ def call(name, args):
                 return text(t[:i] if i > 0 else t[:6000])
         return text("PROTOCOL.md not found", True)
     if name in ("docket_open", "docket_file", "docket_close"):
+        target = None
+        if name == "docket_open" and args.get("workspace"):
+            target, e = resolve_workspace(args["workspace"])
+            if e:
+                return text(e, True)
         return run_new({"docket_open": "request", "docket_file": "filing",
-                        "docket_close": "close"}[name], args)
+                        "docket_close": "close"}[name], args, target)
     return text(f"unknown tool {name}", True)
 
 def main():
-    global CLIENT_ROOTS, _store
+    global CLIENT_ROOTS, _store, _roots_asked
     log(f"docket-mcp: party={PARTY or '(unset)'} store={STORE}")
     while True:
         # Anything client_request read while waiting for its reply is handled
@@ -636,11 +739,13 @@ def main():
                 # may ignore it. It is sent because the alternative is repeating
                 # these rules in every tool description, which every party pays
                 # for on every call rather than once per session.
-                ok(mid, {"protocolVersion": PROTOCOL, "capabilities": {"tools": {}},
-                         "serverInfo": {"name": "docket", "version": "0.2"},
+                ok(mid, {"protocolVersion": MCP_PROTOCOL_VERSION,
+                         "capabilities": {"tools": {}},
+                         "serverInfo": {"name": "docket", "version": SERVER_VERSION},
                          "instructions": INSTRUCTIONS})
             elif method == "notifications/roots/list_changed":
                 _store = None                # re-resolve against the new roots
+                _roots_asked = False         # and ask for them again
             elif method in ("notifications/initialized", "notifications/cancelled"):
                 pass
             elif method == "ping":
