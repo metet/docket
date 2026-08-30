@@ -226,6 +226,33 @@ ambiguous with no way to tell which docket they meant.
 A filing MUST be a Markdown file starting with a YAML front-matter block,
 followed by a free-form Markdown body.
 
+### The front-matter subset
+
+The front matter is **not** YAML. It is the subset below, and an implementation
+MUST NOT need a YAML library to read it. Anything outside this subset is
+non-conforming, whatever a YAML parser would make of it.
+
+- **Lines** are `key: value`. Keys are lowercase `[a-z_]+`. A line that is not a
+  `key: value` pair is ignored.
+- **Scalars** are the rest of the line, trimmed. Surrounding matched quotes, `"`
+  or `'`, are stripped.
+- **Lists** are inline flow style only: `to: [claude, qwen]`. Indented block
+  lists (`- item`) MUST be rejected, not ignored — a reader that silently drops
+  them loses `to` and `refs` without saying so.
+- **A list item containing a comma MUST be quoted.** Items are separated on
+  commas outside quotes, so an unquoted comma splits one value into two:
+
+      evidence: ["docket-lint: 14 filings, 0 errors", git:8e0ba8a]
+
+  is two items. Without the quotes it is three, it lints clean, and nothing
+  downstream can tell. An item containing a comma and both quote characters
+  cannot be represented; rephrase it.
+- **No nested mappings, no anchors, no multi-line scalars.** A value that needs
+  structure belongs in the body.
+
+Values are strings. A reader that wants a number parses one; nothing in the
+format declares types.
+
 ### Required on every filing
 
 | Field | Value |
