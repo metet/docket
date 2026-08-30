@@ -238,8 +238,17 @@ filings stay on disk, and the correction is applied at read time by the reducer.
    committing tooling does not answer to this hook.
 
 6. **The store is a single linear trunk.**
-   `.seq` mutual exclusion is an atomic `mkdir` on one shared filesystem. Parties
-   working on separate branches or worktrees would each allocate the same next
-   number, and the resulting merge conflict is unresolvable without editing
-   filings, which §1 forbids. If application source ever branches, `docket/`
-   stays trunk-based and linear (`r023`).
+   `.seq` mutual exclusion is an atomic `mkdir`, and it is only mutual exclusion
+   on **one shared filesystem**. Parties on separate branches or worktrees each
+   allocate against their own copy and reach the same next number.
+
+   The damage is not the conflict you would expect. `.seq/rNNN/claimed` does
+   conflict, but it is a marker rather than a filing — §1 does not apply and
+   resolving it is harmless. The docket directories are at *different paths*, so
+   git merges both **silently**, leaving two dockets sharing one id that cannot
+   be renumbered without renaming filings. A conflict would at least halt the
+   merge; this does not.
+
+   PROTOCOL.md §5b states the normative rule: all Docket-store writes MUST be
+   serialized through one allocation trunk. Source may branch; `docket/` may not
+   (`r023`, `r028`).

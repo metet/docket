@@ -430,6 +430,10 @@ them agree:
 - With three or more parties, an unclaimed docket is the dominant failure mode —
   every party assumes another is handling it. Implementations SHOULD surface
   unclaimed dockets prominently in `INDEX.md`.
+- Assignment records responsibility for advancing a docket. It is **not**
+  exclusive ownership of any path in `refs`, does not itself say that source
+  implementation has begun, and grants no permission under §7. The coordination
+  convention that builds on this lives in §5b (r026).
 
 #### Saying "over to you" (r015)
 
@@ -481,15 +485,49 @@ explicitly with `assignee: none`, which returns the docket to unclaimed.
 ## 5b. Operating conventions
 
 Docket is a data format, not a scheduler (§0 non-goals). These are the conventions
-that make it work in practice; they are operational, not normative for filings.
+that make it work in practice; they are operational, and mostly not normative for
+filings. Where a rule is required for the store to stay valid rather than merely
+tidy, it is marked MUST and binds implementations as firmly as anything in §1.
+
+### Source work represented by an open docket
+
+Docket does not require a docket for every source edit. When an open docket
+represents a specific source change and implementation is the next intended
+operation, the party expected to implement that change SHOULD be the current
+assignee before implementation begins. A different party SHOULD contribute
+through a filing or request an authorised handoff rather than begin the same
+change in a shared working tree.
+
+When design or review and implementation are independently decidable, the
+requester SHOULD close the design or review docket and open a task docket
+assigned to the implementer. If they remain one outcome, the requester or current
+assignee SHOULD record the handoff before implementation begins.
+
+This is a coordination convention, not authorisation and not a file lock (§4). It
+applies to the specific work represented by the docket, not every file mentioned
+in `refs`; unrelated ordinary development continues normally.
+
+It is a SHOULD because direct human coordination and isolated experiments are
+legitimate exceptions the format cannot model, and because no validator can check
+it — an unenforceable MUST beside checkable ones devalues the checkable ones. The
+failure it exists to prevent is real and recent: three dockets were implemented
+by a party that was neither their assignee nor their `waiting_on` (r022, r023,
+r025).
 
 ### Version control
 
-- A party SHOULD commit its own filings, and MUST commit only files it created.
-- **Filings cannot conflict.** Every filing is a new file whose name is unique by
-  §1, so two parties never touch the same path. Merge conflicts are structurally
-  impossible for filings — which is the practical payoff of append-only, not just
-  an aesthetic one.
+- A party SHOULD commit its own filings.
+- **Append-only conflict freedom is trunk-scoped.** On one shared linear Docket
+  trunk, conforming tools allocate against the same filesystem and never modify
+  an existing filing path. This guarantee does not extend to independently
+  writable branches, worktrees, clones, or disconnected machines.
+- All Docket-store writes MUST be serialized through one allocation trunk.
+  Independent branches can reserve the same docket number. Their
+  `.seq/rNNN/claimed` files may conflict, while differently named docket
+  directories can merge **silently** and leave two dockets with the same id.
+  Choosing one marker does not repair that invalid store, and immutable filings
+  cannot be renumbered after the fact. Source work may use branches or worktrees,
+  but Docket writes MUST target the shared trunk store (r023, r028).
 - `INDEX.md` is the sole exception, since every party regenerates it. **On a
   conflict in `INDEX.md`, regenerate it — never merge it.** It holds no state of
   its own (§3), so any conflicted version is discardable.
@@ -498,13 +536,41 @@ that make it work in practice; they are operational, not normative for filings.
 
 #### Who committed it (r013)
 
-Attribution inside the store is strong: a filing's path names its author (§1),
-and no tool takes a `from` argument. Git attribution is not, and cannot be made
-so here — parties share one OS user, one clone and one push credential, so any
-party can author a commit under any name. What follows makes `git log` answer
-"which party wrote this" for honest parties. It authenticates nobody, and §7's
-treatment of identity as self-asserted applies to a commit exactly as it does to
-a filing.
+Attribution inside the store is strong, with one gap worth naming: every filing
+**after** `000` carries its author in its path (§1), and a request's author is
+carried by its immutable `from` field rather than by its filename. No tool takes
+a `from` argument over MCP. Git attribution is not strong and cannot be made so
+here — parties share one OS user, one clone and one push credential, so any party
+can author a commit under any name. What follows makes `git log` answer "which
+party wrote this" for honest parties. It authenticates nobody, and §7's treatment
+of identity as self-asserted applies to a commit exactly as it does to a filing
+(r031).
+
+#### Publishing another party's filings (r030)
+
+A party SHOULD publish its own completed filings promptly. Another party MAY
+publish a completed filing on behalf of its author when publication is the only
+remaining operation. The commit MUST preserve the filing author: stage explicit
+paths, split filings by author, and use `tools/docket-commit --from <author>`.
+
+A party publishing work on behalf of another MUST NOT use broad staging commands
+such as `git add .` or `git add -A`; if completion is uncertain, leave the files
+untouched and route the author.
+
+Mutable source or documentation edits SHOULD NOT be committed on behalf of
+another party without an explicit handoff naming the completed paths. Immutable
+Docket filings are the safe routine case — they are finished when they exist, and
+a half-written one cannot be committed by accident. A working tree is not a
+completion signal, and exact staging reduces accidental capture without becoming
+a lock.
+
+The git author and `Docket-Party` trailer record the attributed author of the
+work, not the process that invoked git or the identity that pushed it. The
+committer field is inherited from the environment and is proof of neither.
+
+Restricting `--from` to the party at the keyboard was considered and rejected: a
+party that files over MCP and then exits leaves work nobody may publish, so the
+store deadlocks until that party is run again.
 
 - A party SHOULD commit with `tools/docket-commit --from <party>`, which sets the
   author for that one invocation and records a `Docket-Party:` trailer.
@@ -515,9 +581,12 @@ a filing.
 - The **author** is the party; the **committer** is left as the environment's.
   The agent wrote it, the human's credential pushed it, and `%an / %cn` says so.
 - An installed `commit-msg` hook refuses a commit whose declared party
-  contradicts the filings it carries. It does not police which branch a commit
-  lands on, and it never blocks a commit that names no party — the human owns
-  the repository and does not answer to it.
+  contradicts the filings it carries, taking a request's author from its `from`
+  field and every later filing's author from its path. What it establishes is
+  **attribution consistency** — that the commit's claim agrees with the filings
+  staged — never that the same runtime invoked git. It does not police which
+  branch a commit lands on, and it never blocks a commit that names no party —
+  the human owns the repository and does not answer to it.
 
 ### Whose turn it is
 

@@ -33,14 +33,42 @@ Bypass with `git commit --no-verify` when you mean to.
 import os, re, subprocess, sys
 
 # <NNN>-<party>-<label>.md per §1. An opening filing is 000-request.md, which
-# names no party -- that is a gap in the naming rule, not a fault in the commit,
-# so such files simply contribute nothing to compare against.
-FILING = re.compile(r"^\d+-([a-z0-9]+)-.+\.md$")
+# names no party in its path -- its author is in the immutable `from` field, so
+# it is read out of the staged blob instead (see request_author).
+#
+# Until r032 a request contributed nothing here, which left a real hole: a commit
+# carrying one party's request alongside another party's answers could be
+# attributed to the latter and nothing would notice, because the only author the
+# check could see was the one in the filenames.
+FILING  = re.compile(r"^\d+-([a-z0-9]+)-.+\.md$")
+REQUEST = re.compile(r"^\d+-request\.md$")
+FROM    = re.compile(r"^from:\s*([a-z0-9]+)\s*$", re.M)
 
 
 def git(*args):
     p = subprocess.run(["git", *args], capture_output=True, text=True)
     return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def request_author(path):
+    """The `from:` of a staged request, or None if it cannot be read.
+
+    Reads the STAGED blob rather than the working tree. The hook judges what is
+    being committed, and a partial `git add` makes those two different files --
+    the same distinction pre-commit documents about its own narrower scope.
+
+    Unreadable or malformed front matter yields None, which restores the old
+    behaviour of contributing nothing. A request that cannot be parsed is not
+    evidence of a mismatch, and this hook only ever blocks on disagreement.
+    """
+    blob = git("show", f":{path}")
+    if not blob.startswith("---"):
+        return None
+    parts = blob.split("---", 2)
+    if len(parts) < 3:
+        return None
+    m = FROM.search(parts[1])
+    return m.group(1) if m else None
 
 
 def declared_party(msg):
@@ -59,9 +87,15 @@ def staged_parties(store):
     out = git("diff", "--cached", "--name-only", "--diff-filter=ACM", "--", store)
     found = set()
     for path in out.splitlines():
-        m = FILING.match(os.path.basename(path.strip()))
+        path = path.strip()
+        base = os.path.basename(path)
+        m = FILING.match(base)
         if m:
             found.add(m.group(1))
+        elif REQUEST.match(base):
+            who = request_author(path)
+            if who:
+                found.add(who)
     return found
 
 

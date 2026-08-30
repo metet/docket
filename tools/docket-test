@@ -697,6 +697,86 @@ check("T22", "a commit with no filings is not policed",
       r.returncode == 0 and "commit-msg:" not in r.stderr, r.stderr[:120])
 shutil.rmtree(d)
 
+# ---- T22 (r032): a request's author is in its front matter, not its filename ----
+# 000-request.md carries no party in its path, so before r032 staged_parties saw
+# nothing for it. A commit could then carry one party's request under another
+# party's name undetected -- the one gap left in the r013 attribution work.
+d = repo()
+newf(d, kind="request", **{"from": "agy", "slug": "y", "title": "Y",
+                           "act": "task", "body": "b"})
+newf(d, kind="filing", docket="r001", **{"from": "claude", "act": "answer",
+                                         "title": "A", "body": "b"})
+dk = "docket/r001-y"
+
+# 1. Publishing another party's completed filing under that party's own name is
+#    legal (§5b, r030) -- it is what stops a store deadlocking when the author
+#    files over MCP and exits without committing.
+stage(d, "docket/.seq", "docket/INDEX.md", dk + "/000-request.md")
+r = commit(d, "agy", "r001: publish agy's request on agy's behalf")
+check("T22", "publishing another party's filing under its true author is allowed",
+      r.returncode == 0, r.stderr.strip()[:140])
+check("T22", "and it is attributed to the author, not the operator",
+      show(d, "%an") == "agy", show(d, "%an"))
+
+# 2. The gap itself: agy's request plus claude's answer, declared as claude. The
+#    filename check sees only "claude" and passes; the request's `from` is the
+#    only thing that makes this a mismatch.
+reset(d)
+newf(d, kind="request", **{"from": "agy", "slug": "z", "title": "Z",
+                           "act": "task", "body": "b"})
+dz = "docket/r002-z"
+stage(d, "docket/.seq", dz + "/000-request.md", dk + "/001-claude-answer.md")
+r = commit(d, "claude", "mixed: agy's request and claude's answer")
+check("T22", "a request by another party is caught though its path names nobody",
+      r.returncode == 1, r.stderr.strip().splitlines()[-1][:140] if r.stderr.strip() else "")
+check("T22", "the refusal names the request's author from its front matter",
+      "agy" in r.stderr, r.stderr[:140])
+
+# 3. Splitting by author is the remedy the refusal asks for, so it must work.
+reset(d)
+stage(d, "docket/.seq", dz + "/000-request.md")
+r_a = commit(d, "agy", "r002: agy's request")
+reset(d)
+stage(d, dk + "/001-claude-answer.md", "docket/INDEX.md")
+r_c = commit(d, "claude", "r001: claude's answer")
+check("T22", "splitting the same work by author lets both commits through",
+      r_a.returncode == 0 and r_c.returncode == 0,
+      f"agy={r_a.returncode} claude={r_c.returncode}")
+
+# 4. An unreadable request must not invent a mismatch: no parseable front matter
+#    means no author, which is the pre-r032 behaviour of contributing nothing.
+#    This hook blocks only on disagreement, never on absence.
+#
+#    Called directly rather than through a commit. pre-commit runs docket-lint
+#    first and rightly refuses a malformed filing, so a commit can never carry
+#    one as far as commit-msg -- the case is reachable only at this level.
+import importlib.util as _iu2, importlib.machinery as _im2
+_hspec = _iu2.spec_from_loader("cmsg", _im2.SourceFileLoader(
+    "cmsg", os.path.join(HOOKS, "commit-msg")))
+_cmsg = _iu2.module_from_spec(_hspec)
+_hspec.loader.exec_module(_cmsg)          # name is not __main__, so main() stays put
+
+reset(d)
+os.makedirs(os.path.join(d, "docket", "r003-broken"), exist_ok=True)
+open(os.path.join(d, "docket", "r003-broken", "000-request.md"), "w").write("no front matter\n")
+stage(d, "docket/r003-broken/000-request.md")
+# request_author shells out to git in the process cwd, and this suite runs from
+# the pre-commit hook with GIT_DIR and GIT_INDEX_FILE exported. Left in place
+# they would point the read back at the real repository -- the same escape T14
+# and the GENV filter above exist to stop.
+_cwd = os.getcwd()
+_saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")}
+try:
+    os.chdir(d)
+    _author = _cmsg.request_author("docket/r003-broken/000-request.md")
+finally:
+    os.chdir(_cwd)
+    os.environ.update(_saved)
+check("T22", "an unreadable request yields no author, so it cannot cause a mismatch",
+      _author is None, repr(_author))
+reset(d)
+shutil.rmtree(d)
+
 # ---- T23: waiting_on survives a handoff to a third party (r014) ----
 # The rule until r014 keyed on "was the last filer the requester", which is
 # complete for two parties. Every case below has three, and the first four are
