@@ -153,6 +153,13 @@ def main():
             m = json.loads(line)
         except json.JSONDecodeError as e:
             err(None, -32700, f"parse error: {e}"); continue
+        # Valid JSON that is not an object still has no .get: a bare array or
+        # scalar reached m.get() below and killed the process, dropping the
+        # connection -- the one thing the handler at the end of this loop exists
+        # to prevent.
+        if not isinstance(m, dict):
+            err(None, -32600, f"invalid request: expected an object, got {type(m).__name__}")
+            continue
         method, mid = m.get("method"), m.get("id")
         try:
             if method == "initialize":
