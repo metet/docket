@@ -198,6 +198,24 @@ acts = {f["fm"].get("id"): f["fm"].get("act")
 check("T12", "the target keeps its own act", acts.get("r001/001-qwen") == "answer", str(acts))
 shutil.rmtree(d)
 
+# ---- T13: blocked_on routing decided by registry membership ----
+d = fresh()
+new_ = lambda *a: subprocess.run(["python3", os.path.join(D,"tools","docket-new"), *a],
+                                 input="b", capture_output=True, text=True, cwd=d)
+sys.path.insert(0, os.path.join(D, "tools"))
+import importlib, docket_lib; importlib.reload(docket_lib)
+def blocked(slug, on):
+    new_("request","--store","docket","--from","claude","--slug",slug,"--title","T",
+         "--act","task","--assignee","qwen")
+    did = sorted(docket_lib.dockets(os.path.join(d,"docket")))[-1]
+    new_("filing","--store","docket","--docket",did.split("-")[0],"--from","qwen","--act","ack",
+         "--title","B","--status","blocked","--blocked-on",on)
+    return docket_lib.validate_docket(os.path.join(d,"docket"), did)[4]["waiting_on"]
+check("T13", "external condition routes to nobody", blocked("x","upstream CI is red") is None,
+      repr(blocked.__name__))
+check("T13", "blocked on a party routes to it", blocked("y","codex") == "codex", "")
+shutil.rmtree(d)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0

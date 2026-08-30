@@ -196,7 +196,7 @@ def apply_errata(filings):
     return filings
 
 
-def reduce_docket(filings, invalid=frozenset()):
+def reduce_docket(filings, invalid=frozenset(), known=frozenset()):
     """Single authoritative reduction (PROTOCOL 3). Returns derived state plus
     any authority violations. Invalid filings never change derived state."""
     st = dict(requester=None, status="open", assignee=None, blocked_on=None,
@@ -247,6 +247,14 @@ def reduce_docket(filings, invalid=frozenset()):
     valid = [f for f in filings if f["fn"] not in invalid]
     if st["status"] in TERMINAL or not valid:
         st["waiting_on"] = None
+    elif st["status"] == "blocked" and st["blocked_on"] and known:
+        # `blocked_on` is "a party or an external condition" with nothing to tell
+        # them apart, so the registry decides: a name in it is a party, and that
+        # party is who to run. Anything else is a condition no party can advance,
+        # and naming one anyway invited someone to work on a blocked docket.
+        # Registry membership rather than a syntax prefix, because a prefix is
+        # another rule the weakest party has to remember (r002).
+        st["waiting_on"] = st["blocked_on"] if st["blocked_on"] in known else None
     else:
         # Pull-only: nothing wakes a party, so name whose turn it is. If the last
         # word was the requester's, the assignee owes work; otherwise the
@@ -389,7 +397,7 @@ def validate_docket(store, dirname, known=None):
             invalid.add(fn)
             errors.extend(f"{w}: {m}" for m in errs)
 
-    state = reduce_docket(filings, invalid)
+    state = reduce_docket(filings, invalid, known)
     errors.extend(f"{dirname}/{v}" for v in state["violations"])
     return filings, invalid, errors, warnings, state
 
