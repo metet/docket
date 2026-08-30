@@ -100,8 +100,14 @@ def run_new(kind, args):
                       ("--to","to"), ("--assignee","assignee"), ("--parent","parent"),
                       ("--refs","refs"), ("--evidence","evidence"),
                       ("--status","status"), ("--blocked-on","blocked_on")):
-        if args.get(key):
-            argv += [flag, str(args[key])]
+        v = args.get(key)
+        if not v:
+            continue
+        # Models routinely pass a JSON array for the comma-separated fields.
+        # str() on a list yields "['a', 'b']", which docket-new then splits on
+        # the comma into two bracketed fragments, so the corruption reaches the
+        # filing rather than being rejected.
+        argv += [flag, ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)]
     p = subprocess.run(argv, input=args.get("body", ""), capture_output=True, text=True)
     if p.returncode != 0:
         return text((p.stderr or p.stdout).strip() or "docket-new failed", True)
