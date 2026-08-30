@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Behavioural tests for docket-mcp. No dependencies, no framework.
+
+Each check was written against a defect that reproduced first, so a failure here
+names a bug that was once real rather than a style preference. Every case builds
+a throwaway store with docket-init and drives the server over stdio the way a
+client does, because most of these defects were invisible to inspection and only
+showed up in what actually got written to a filing.
+
+  python3 tools/docket-test        # exits 1 if anything fails
+"""
+import os, sys, json, shutil, subprocess, tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+D    = os.path.dirname(HERE)
+MCP  = os.path.join(HERE, "docket-mcp")
+results = []
+
+def server(lines, party="qwen", store="docket", cwd=None):
+    inp = "\n".join(json.dumps(l) if isinstance(l, dict) else l for l in lines) + "\n"
+    env = dict(os.environ, DOCKET_PARTY=party, DOCKET_STORE=store)
+    p = subprocess.run(["python3", MCP], input=inp, capture_output=True, text=True, cwd=cwd, env=env)
+    out = [json.loads(l) for l in p.stdout.splitlines() if l.strip().startswith("{")]
+    return p.returncode, out, p.stderr
+
+INIT = {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+def tc(name, args, i=2):
+    return {"jsonrpc":"2.0","id":i,"method":"tools/call","params":{"name":name,"arguments":args}}
+
+def fresh():
+    d = tempfile.mkdtemp(prefix="dk-")
+    subprocess.run(["python3", os.path.join(D,"tools","docket-init"), d, "--link"],
+                   capture_output=True, text=True)
+    return d
+
+def check(tid, desc, cond, detail=""):
+    results.append((tid, desc, bool(cond), detail))
+
+# ---- T1: non-object JSON must not kill the server ----
+rc, out, _ = server([INIT, "[1,2,3]", {"jsonrpc":"2.0","id":3,"method":"ping"}])
+check("T1", "survives a JSON array", rc == 0 and any(m.get("id") == 3 for m in out),
+      f"exit={rc} ids={[m.get('id') for m in out]}")
+
+# ---- T2: a failing non-tools/call method returns a JSON-RPC error, not content ----
+rc, out, _ = server([INIT, {"jsonrpc":"2.0","id":9,"method":"tools/call"}])   # params missing
+m = next((x for x in out if x.get("id") == 9), {})
+check("T2", "malformed tools/call -> JSON-RPC error", "error" in m,
+      f"got keys={sorted(m.keys())}")
+
+# ---- T3: docket_list party matching ----
+d = fresh()
+server([INIT, tc("docket_open", {"slug":"q","title":"Q","body":"b","act":"question",
+                                 "to":"qwen","assignee":"qwen"})], party="claude", cwd=d)
+def listing(party):
+    _, out, _ = server([INIT, tc("docket_list", {})], party=party, cwd=d)
+    return out[-1]["result"]["content"][0]["text"]
+check("T3", "unset party claims nothing", "waiting on you" not in listing(""), listing("").replace("\n","|"))
+check("T3", "substring party claims nothing", "waiting on you" not in listing("qwe"), listing("qwe").replace("\n","|"))
+check("T3", "exact party still claimed", "waiting on you" in listing("qwen"), listing("qwen").replace("\n","|"))
+shutil.rmtree(d)
+
+# ---- T4: list arguments ----
+d = fresh()
+server([INIT, tc("docket_open", {"slug":"q","title":"Q","body":"b","act":"question"})], party="claude", cwd=d)
+server([INIT, tc("docket_file", {"docket":"r001","title":"A","body":"b","act":"answer",
+                                 "evidence":["git:58f22c6","pytest passing"]})], party="qwen", cwd=d)
+ev = [l for l in open(os.path.join(d,"docket","r001-q","001-qwen-answer.md")).read().splitlines()
+      if l.startswith("evidence:")]
+check("T4", "list evidence serialised cleanly", ev == ["evidence: [git:58f22c6, pytest passing]"], str(ev))
+shutil.rmtree(d)
+
+# ---- T5: docket_file schema exposes assignee and to ----
+_, out, _ = server([INIT, {"jsonrpc":"2.0","id":4,"method":"tools/list"}])
+tools = {t["name"]: t for t in out[-1]["result"]["tools"]}
+props = set(tools["docket_file"]["inputSchema"]["properties"])
+check("T5", "docket_file exposes assignee+to", {"assignee","to"} <= props, str(sorted(props)))
+
+# ---- T6: erratum either works or is not advertised ----
+acts = tools["docket_file"]["inputSchema"]["properties"]["act"]["enum"]
+if "erratum" in acts:
+    ok6 = {"supersedes","corrects"} <= props
+    detail6 = f"advertised; supersedes/corrects present={ok6}"
+else:
+    ok6, detail6 = True, "erratum not advertised"
+check("T6", "erratum is supported or absent", ok6, detail6)
+
+d = fresh()
+server([INIT, tc("docket_open", {"slug":"q","title":"Q","body":"b","act":"question"})], party="claude", cwd=d)
+if "erratum" in acts:
+    server([INIT, tc("docket_file", {"docket":"r001","title":"A","body":"b","act":"answer",
+                                     "evidence":"git:aaa"})], party="qwen", cwd=d)
+    server([INIT, tc("docket_file", {"docket":"r001","title":"E","body":"b","act":"erratum",
+                                     "supersedes":"r001/001-qwen","corrects":"evidence",
+                                     "evidence":"git:bbb"})], party="qwen", cwd=d)
+    lint = subprocess.run(["python3", os.path.join(D,"tools","docket-lint"), "docket"],
+                          capture_output=True, text=True, cwd=d)
+    check("T6", "erratum filed via MCP lints clean", lint.returncode == 0, lint.stdout.strip().splitlines()[-1])
+
+# ---- T7: docket_read applies errata ----
+if "erratum" in acts:
+    _, out, _ = server([INIT, tc("docket_read", {"docket":"r001"})], party="qwen", cwd=d)
+    body = out[-1]["result"]["content"][0]["text"]
+    # The superseded filing is immutable and stays visible as written; what the
+    # reader must not miss is that a later erratum replaced the value.
+    check("T7", "docket_read flags the correction",
+          "git:bbb" in body and "corrected by a later erratum" in body,
+          "no correction note" if "corrected by a later erratum" not in body else "missing new value")
+shutil.rmtree(d)
+
+# ---- T8: docket_open can keep a report open ----
+d = fresh()
+server([INIT, tc("docket_open", {"slug":"r","title":"R","body":"b","act":"report","status":"open"})],
+       party="claude", cwd=d)
+st = [l for l in open(os.path.join(d,"docket","r001-r","000-request.md")).read().splitlines()
+      if l.startswith("status:")]
+check("T8", "report can be opened as status=open", st == ["status: open"], str(st))
+oprops = tools["docket_open"]["inputSchema"]["properties"]
+check("T8", "docket_open advertises status", "status" in oprops, str(sorted(oprops)))
+shutil.rmtree(d)
+
+# ---- T10: a value containing a comma survives the round trip ----
+EV = "docket-lint: 14 filings, 0 errors"
+d = fresh()
+server([INIT, tc("docket_open", {"slug":"q","title":"Q","body":"b","act":"question"})], party="claude", cwd=d)
+server([INIT, tc("docket_file", {"docket":"r001","title":"A","body":"b","act":"answer",
+                                 "evidence":[EV, "git:aaa"]})], party="qwen", cwd=d)
+sys.path.insert(0, os.path.join(D, "tools"))
+import importlib, docket_lib; importlib.reload(docket_lib)
+fl = docket_lib.load(os.path.join(d, "docket", "r001-q"))
+got = docket_lib.as_list(next(f["fm"] for f in fl if f["fm"].get("act") == "answer").get("evidence"))
+check("T10", "comma inside a list item survives", got == [EV, "git:aaa"], str(got))
+lint = subprocess.run(["python3", os.path.join(D,"tools","docket-lint"), "docket"],
+                      capture_output=True, text=True, cwd=d)
+check("T10", "store still lints clean", lint.returncode == 0, lint.stdout.strip().splitlines()[-1])
+shutil.rmtree(d)
+
+# ---- T11: a missing required argument names itself ----
+d = fresh()
+_, out, _ = server([INIT, tc("docket_file", {"docket":"r001","body":"b"})], party="qwen", cwd=d)
+msg = out[-1]["result"]["content"][0]["text"]
+check("T11", "missing argument is named, not a KeyError",
+      "title" in msg and "KeyError" not in msg, msg[:90])
+_, out, _ = server([INIT, tc("docket_read", {})], party="qwen", cwd=d)
+msg = out[-1]["result"]["content"][0]["text"]
+check("T11", "docket_read names its missing argument",
+      "docket" in msg and "KeyError" not in msg, msg[:90])
+shutil.rmtree(d)
+
+# ---- T9: tool annotations ----
+READERS = {"docket_list", "docket_read", "docket_protocol"}
+WRITERS = {"docket_open", "docket_file", "docket_close"}
+missing = [n for n in tools if "annotations" not in tools[n]]
+check("T9", "every tool is annotated", not missing, f"missing: {missing}")
+untitled = [n for n in tools if not tools[n].get("annotations", {}).get("title")]
+check("T9", "every tool has a display title", not untitled, f"untitled: {untitled}")
+bad = [n for n in READERS if tools[n].get("annotations", {}).get("readOnlyHint") is not True]
+check("T9", "readers marked readOnlyHint", not bad, f"not read-only: {bad}")
+bad = [n for n in WRITERS if tools[n].get("annotations", {}).get("readOnlyHint") is not False]
+check("T9", "writers marked not read-only", not bad, f"wrong: {bad}")
+bad = [n for n in ("docket_open", "docket_file")
+       if tools[n].get("annotations", {}).get("destructiveHint") is not False]
+check("T9", "append-only writers are non-destructive", not bad, f"wrong: {bad}")
+check("T9", "close is marked destructive",
+      tools["docket_close"].get("annotations", {}).get("destructiveHint") is True,
+      str(tools["docket_close"].get("annotations")))
+bad = [n for n in WRITERS if tools[n].get("annotations", {}).get("idempotentHint") is not False]
+check("T9", "writers are non-idempotent", not bad, f"wrong: {bad}")
+bad = [n for n in tools if tools[n].get("annotations", {}).get("openWorldHint") is not False]
+check("T9", "all tools are closed-world", not bad, f"wrong: {bad}")
+
+# ---- report ----
+w = max(len(r[1]) for r in results)
+fails = 0
+for tid, desc, passed, detail in results:
+    print(f"{tid}  {'PASS' if passed else 'FAIL'}  {desc:<{w}}  {detail if not passed else ''}")
+    fails += not passed
+print(f"\n{len(results)} checks, {fails} failing")
+sys.exit(1 if fails else 0)
