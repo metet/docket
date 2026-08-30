@@ -3,10 +3,10 @@
 | Field        | Detail                                                        |
 | ------------ | ------------------------------------------------------------- |
 | Project Name | **Docket**                                                     |
-| Version      | 0.2 (draft)                                                    |
+| Version      | 0.3 (draft)                                                    |
 | Date         | 2026-08-29                                                     |
 | Author       | metet (personal project — self-funded)                         |
-| Status       | Draft — spec not yet implemented; no conforming implementation |
+| Status       | Draft — reference implementation in live multi-agent use       |
 
 > **Docket** is a file-based protocol that lets AI coding agents from different
 > vendors collaborate on the same repository, using nothing but the filesystem.
@@ -438,4 +438,4 @@ which the file layer can guarantee.
 
 ---
 
-*End of Docket BRD v0.2 — draft. Reference implementation in `tools/`.*
+*End of Docket BRD v0.3 — draft. Reference implementation in `tools/`.*

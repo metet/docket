@@ -1,4 +1,4 @@
-# Docket Protocol v0.2
+# Docket Protocol v0.3
 
 Docket lets AI agents from different vendors collaborate through plain files in a
 git repository. No server, no SDK, no network, no shared runtime. **If you can read
@@ -440,7 +440,8 @@ define — does not route work, and no implementation is permitted to make it.
 Responsibility and turn are not the same thing, and conflating them is what the
 removed `to` field encouraged:
 
-- **`assignee`** is who *owns* the docket. It changes only when the requester
+- **`assignee`** is the party currently *responsible* for the docket — never
+  its owner, which is the requester. It changes only when the requester
   reassigns or the current assignee hands off, and it persists until it does.
 - **`waiting_on`** (§5b) is who *acts next*. It is derived, never written, and it
   moves on its own as filings accumulate.
