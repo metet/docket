@@ -126,6 +126,7 @@ TOOLS = [
 ]
 
 def run_new(kind, args):
+    from docket_lib import quote_flow
     """Every write goes through docket-new: one implementation, no drift.
     argv is built as a list, so no argument can inject a flag."""
     if not PARTY:
@@ -145,7 +146,9 @@ def run_new(kind, args):
         # str() on a list yields "['a', 'b']", which docket-new then splits on
         # the comma into two bracketed fragments, so the corruption reaches the
         # filing rather than being rejected.
-        argv += [flag, ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)]
+        # quote_flow keeps an item that contains a comma from being split back
+        # into two by docket-new's own comma parsing.
+        argv += [flag, ", ".join(quote_flow(x) for x in v) if isinstance(v, list) else str(v)]
     p = subprocess.run(argv, input=args.get("body", ""), capture_output=True, text=True)
     if p.returncode != 0:
         return text((p.stderr or p.stdout).strip() or "docket-new failed", True)

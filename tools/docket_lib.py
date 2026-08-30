@@ -38,11 +38,42 @@ def scalar(v):
         v = v[1:-1]
     return v.strip()
 
+def split_flow(s):
+    """Split on commas that are not inside quotes.
+
+    An item may legitimately contain a comma -- "docket-lint: 14 filings, 0
+    errors" is one piece of evidence, not two. A plain split turned it into two,
+    silently, in a filing that is immutable and lints clean either way. Quoting
+    is how such an item is written; this is the matching reader.
+    """
+    out, cur, q = [], [], None
+    for ch in s:
+        if q:
+            cur.append(ch)
+            if ch == q: q = None
+        elif ch in "\"'":
+            q = ch; cur.append(ch)
+        elif ch == ",":
+            out.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+    out.append("".join(cur))
+    return out
+
+def quote_flow(x):
+    """Quote a flow-list item that would otherwise be split on its own comma."""
+    x = str(x)
+    if "," not in x: return x
+    if '"' not in x: return f'"{x}"'
+    if "'" not in x: return f"'{x}'"
+    raise ValueError(f"cannot represent a list item containing a comma and "
+                     f"both quote characters: {x!r}")
+
 def as_list(v):
     """Inline flow style only: [a, b]. Block lists are rejected by front_matter."""
     if not v: return []
     if v.startswith("[") and v.endswith("]"):
-        return [scalar(x) for x in v[1:-1].split(",") if x.strip()]
+        return [scalar(x) for x in split_flow(v[1:-1]) if x.strip()]
     return [v] if v else []
 
 def front_matter(text):

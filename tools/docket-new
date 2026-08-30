@@ -15,7 +15,7 @@ Body is read from stdin, or --body, or left as a stub.
 import os, re, sys, argparse, datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from docket_lib import (parties, load, reduce_docket, ACTS, STATUSES, CURRENT,
-                        TERMINAL, CORRECTABLE)
+                        TERMINAL, CORRECTABLE, split_flow, quote_flow, scalar)
 
 def die(msg):
     print(f"docket-new: {msg}", file=sys.stderr); sys.exit(2)
@@ -58,7 +58,8 @@ def fm_lines(d):
     out = []
     for k, v in d.items():
         if v in (None, "", []): continue
-        out.append(f"{k}: [{', '.join(v)}]" if isinstance(v, list) else f"{k}: {v}")
+        out.append(f"{k}: [{', '.join(quote_flow(x) for x in v)}]"
+                   if isinstance(v, list) else f"{k}: {v}")
     return "\n".join(out)
 
 def write_exclusive(path, text):
@@ -98,7 +99,8 @@ def main():
     body = a.body if a.body else (sys.stdin.read() if not sys.stdin.isatty() else "")
     if not body.strip(): body = "_(no body supplied)_"
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    lst = lambda s: [x.strip() for x in s.split(",")] if s else None
+    # Quote-aware, so --evidence '"a, b", c' is two items and not three.
+    lst = lambda s: [scalar(x) for x in split_flow(s) if x.strip()] if s else None
 
     if a.kind == "request":
         if not a.slug: die("--slug is required for a request")
