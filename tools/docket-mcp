@@ -37,16 +37,39 @@ def text(s, is_error=False):
 
 S = lambda d="": {"type": "string", **({"description": d} if d else {})}
 
+def A(title, read_only, destructive=False, idempotent=False):
+    """Tool annotations, so a host can tell reads from writes.
+
+    Without these a host has one switch for the whole server: prompt on every
+    call, or trust all of them. That is the wrong granularity here — reading a
+    docket is safe, and filing one puts an immutable record in front of another
+    party. openWorldHint is false throughout: every tool acts on the local
+    store and reaches nothing outside it.
+
+    destructiveHint defaults to true in the spec, so saying false is the
+    informative case: filings are append-only and never overwrite. Only
+    docket_close is left destructive — it appends like the rest, but the
+    terminal status it sets cannot be reversed by any later filing.
+    """
+    a = {"title": title, "readOnlyHint": read_only, "openWorldHint": False}
+    if not read_only:
+        a["destructiveHint"] = destructive
+        a["idempotentHint"] = idempotent
+    return a
+
+
 TOOLS = [
   {"name": "docket_list",
    "description": "List open dockets: status, assignee, and which party each is waiting on. "
                   "Call this first in a session — anything waiting on you is yours to advance.",
-   "inputSchema": {"type": "object", "properties": {}, "required": []}},
+   "inputSchema": {"type": "object", "properties": {}, "required": []},
+   "annotations": A("List open dockets", read_only=True)},
   {"name": "docket_read",
    "description": "Read every filing in one docket, in canonical order.",
    "inputSchema": {"type": "object",
                    "properties": {"docket": S("docket id, e.g. r004")},
-                   "required": ["docket"]}},
+                   "required": ["docket"]},
+   "annotations": A("Read a docket", read_only=True)},
   {"name": "docket_open",
    "description": "Open a new docket: a question, task, review or report that needs an answer. "
                   "Use for anything whose outcome should be findable later.",
@@ -60,7 +83,8 @@ TOOLS = [
        "status":   {"type": "string", "enum": ["open", "resolved"],
                     "description": "defaults to open, or resolved for act: report. "
                                    "Set open on a report that does need a reply."}},
-    "required": ["slug", "title", "body"]}},
+    "required": ["slug", "title", "body"]},
+   "annotations": A("Open a docket", read_only=False, destructive=False)},
   {"name": "docket_file",
    "description": "Add a filing to an existing docket — an answer, an objection, an "
                   "acknowledgement, or a correction. Does not close it.",
@@ -81,7 +105,8 @@ TOOLS = [
        "evidence": S("comma-separated proof: commit sha, command output, a file"),
        "status":   {"type": "string", "enum": ["open","blocked"]},
        "blocked_on": S("party or condition being waited on")},
-    "required": ["docket", "title", "body"]}},
+    "required": ["docket", "title", "body"]},
+   "annotations": A("Add a filing", read_only=False, destructive=False)},
   {"name": "docket_close",
    "description": "Close a docket you opened. Only the requester may close; if you are not, "
                   "file an answer proposing closure instead. Attach evidence pointing outward.",
@@ -91,11 +116,13 @@ TOOLS = [
        "body":     S("what was decided and why"),
        "evidence": S("comma-separated proof: commit sha, command output, a file outside the store"),
        "status":   {"type": "string", "enum": ["resolved", "withdrawn"]}},
-    "required": ["docket", "title", "body"]}},
+    "required": ["docket", "title", "body"]},
+   "annotations": A("Close a docket", read_only=False, destructive=True)},
   {"name": "docket_protocol",
    "description": "Return the Docket protocol's quick start: how to file, who may close, "
                   "and the rules most often broken. Read this before your first filing.",
-   "inputSchema": {"type": "object", "properties": {}, "required": []}},
+   "inputSchema": {"type": "object", "properties": {}, "required": []},
+   "annotations": A("Read the Docket protocol", read_only=True)},
 ]
 
 def run_new(kind, args):
