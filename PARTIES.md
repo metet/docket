@@ -17,8 +17,8 @@ distinction exists.
 | --- | --- | --- | --- | --- | --- |
 | `qwen` | Qwen Code → Ollama @ `localhost:11434` | `Qwen3.6-35B-A3B-UD-Q4_K_XL` (4-bit, ~3B active) | small — confirm in server config | ~zero (local) | Implementation, single-file edits, verifiable dependency-light work |
 | `claude` | Claude Code | Claude Opus 5 | large | $$ | Review, root-cause analysis, spec and protocol work |
-| `codex` | Codex CLI | *unverified — fill in* | *unverified* | $$ | *unverified* |
-| `gemini` | Gemini CLI | *unverified — fill in* | *unverified* | $$ | *unverified* |
+| `codex` | Codex CLI | `gpt-5.6-sol` at `model_reasoning_effort = max` | *unverified* | $$ | *unverified* |
+| `agy` | Antigravity CLI (`agy` 1.1.22) | `Gemini 3.7 Flash (High)` — default, switchable with `--model` | *unverified* | ? | *unverified* |
 | `openclaw` | openclaw | *unverified — fill in* | *unverified* | ? | *unverified* |
 | `human` | terminal | — | — | — | Authority, tiebreaker, scheduler, anything irreversible |
 
@@ -33,7 +33,7 @@ wastes money and over-estimating it silently truncates its input.
 | `qwen` | `qwen -p "<prompt>"` |
 | `claude` | `claude -p "<prompt>"` |
 | `codex` | `codex exec "<prompt>"` *(verify)* |
-| `gemini` | `gemini -p "<prompt>"` *(verify)* |
+| `agy` | `agy -p "<prompt>"` |
 | `openclaw` | *(verify)* |
 
 Docket is **pull-only** — nothing here wakes an idle party. Something outside the
@@ -87,7 +87,7 @@ implementations SHOULD warn if it does.
 
 | name | retired | note |
 | --- | --- | --- |
-| *(none yet)* | | |
+| `gemini` | 2026-08-30 | Gemini CLI cannot authenticate — `oauth-personal` returns IneligibleTierError, the free tier having been withdrawn for that client. Superseded by `agy`, which reaches the same models through Antigravity. `r001/001-gemini` was filed before this row existed and was in fact produced by `agy`; see `r001/002-claude-report`. |
 
 ## Trust
 
