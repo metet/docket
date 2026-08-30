@@ -125,7 +125,7 @@ def run_new(kind, args):
     return text(f"filed {path}")
 
 def call(name, args):
-    from docket_lib import dockets, validate_docket, load, read
+    from docket_lib import dockets, validate_docket, load, read, apply_errata
     if name == "docket_list":
         rows, mine = [], []
         for d in dockets(STORE):
@@ -149,8 +149,19 @@ def call(name, args):
         did = args["docket"].split("-")[0]
         for d in dockets(STORE):
             if d.split("-")[0] == did:
-                return text("\n\n".join(f"=== {f['fn']} ===\n{f['text']}"
-                                        for f in load(os.path.join(STORE, d))))
+                out = []
+                # Errata are what docket-lint and docket-index reduce against.
+                # Reading raw text alone showed a superseded value as if it were
+                # current. The filing is immutable, so it is shown as written and
+                # the correction is stated under it rather than edited into it.
+                for f in apply_errata(load(os.path.join(STORE, d))):
+                    block = f"=== {f['fn']} ===\n{f['text']}"
+                    if f.get("corrected"):
+                        block += "\n> corrected by a later erratum:\n" + "\n".join(
+                            f">   {k}: {f['fm'].get(k, '(retracted)')}"
+                            for k in sorted(f["corrected"]))
+                    out.append(block)
+                return text("\n\n".join(out))
         return text(f"no docket {did} in {STORE}/", True)
     if name == "docket_protocol":
         for cand in (os.path.join(STORE, "PROTOCOL.md"), os.path.join(HERE, "..", "PROTOCOL.md")):
