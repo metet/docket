@@ -169,7 +169,6 @@ TOOLS = [
        "title":    S("one line stating the question or task"),
        "body":     S("the full request, in Markdown"),
        "act":      {"type": "string", "enum": ["question","task","review","report"]},
-       "to":       S("comma-separated party names"),
        "assignee": S("party responsible for advancing it"),
        "status":   {"type": "string", "enum": ["open", "resolved"],
                     "description": "defaults to open, or resolved for act: report. "
@@ -189,7 +188,6 @@ TOOLS = [
                        "e.g. r004/001-qwen. You may only correct your own."),
        "corrects":   S("with act: erratum — comma-separated field names to "
                        "correct; supply the new values as ordinary arguments"),
-       "to":       S("comma-separated party names"),
        "assignee": S("party responsible for advancing it; claim an unclaimed "
                      "docket by filing act: ack with yourself as assignee"),
        "refs":     S("comma-separated path:line references"),
@@ -372,7 +370,7 @@ def run_new(kind, args):
     argv = ["python3", NEW, kind, "--store", target_store, "--from", PARTY,
             "--title", args["title"]]
     for flag, key in (("--slug","slug"), ("--docket","docket"), ("--act","act"),
-                      ("--to","to"), ("--assignee","assignee"), ("--parent","parent"),
+                      ("--assignee","assignee"), ("--parent","parent"),
                       ("--refs","refs"), ("--evidence","evidence"),
                       ("--supersedes","supersedes"), ("--corrects","corrects"),
                       ("--status","status"), ("--blocked-on","blocked_on")):

@@ -27,8 +27,8 @@ protocol. The practical consequences:
 - **Vendor protocols pull toward lock-in.** Adopting one vendor's agent-to-agent
   mechanism makes the *other* vendors' agents second-class participants.
 - **The obvious fallback — a shared chat log — does not scale.** A single appended
-  transcript grows without bound, has no addressing, no notion of what is still
-  open, and no way to stop. Every participant re-reads the entire history to
+  transcript grows without bound, has no notion of whose turn it is, none of what
+  is still open, and no way to stop. Every participant re-reads the entire history to
   contribute one message.
 
 The last point is not hypothetical. This protocol's motivating incident: a single
@@ -84,7 +84,7 @@ automated supervisor exists. If one is added later it is simply another party.
 | S1 | Request-scoped conversation: one parent request, many immutable child filings | Must |
 | S2 | A lifecycle with explicit terminal states, and rules for who may close | Must |
 | S3 | A record schema carrying identity, threading, and evidence | Must |
-| S4 | Addressing and assignment across ≥ 2 parties | Must |
+| S4 | Assignment and derived turn-taking across ≥ 2 parties | Must |
 | S5 | A derived index of open work — generated, never hand-maintained | Must |
 | S6 | A participant registry (`PARTIES.md`) declaring each party's capabilities and cost | Should |
 | S7 | Per-tool onboarding convention (`CLAUDE.md` / `QWEN.md` / `GEMINI.md` / `AGENTS.md`) | Should |
@@ -179,7 +179,7 @@ followed by a free-form Markdown body.
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `protocol` | string | `docket/0.2` — the spec version this filing claims |
+| `protocol` | string | `docket/0.3` — the spec version this filing claims |
 | `id` | string | `<docket>/000` for a request, else `<docket>/<NNN>-<party>` — e.g. `r003/002-qwen`. Globally unique within the store |
 | `docket` | string | `r003` — the parent request |
 | `from` | string | Party name, as registered in `PARTIES.md` |
@@ -190,7 +190,6 @@ followed by a free-form Markdown body.
 
 | Field | Type | Meaning |
 | ----- | ---- | ------- |
-| `to` | list | Intended recipients. Absent means broadcast |
 | `parent` | string | Filing this responds to. Absent means the request |
 | `act` | enum | `question` \| `task` \| `review` \| `report` \| `answer` \| `objection` \| `ack` |
 | `assignee` | string | Party responsible for advancing the docket |
@@ -234,7 +233,7 @@ metric §1.3's per-party validity rate.
 - A request with `act: report` requires no reply and MAY be created directly in
   `status: resolved`.
 
-### FR-4 Addressing & Assignment
+### FR-4 Assignment
 
 - Every open docket SHOULD have exactly one `assignee` — the party responsible
   for advancing it. `assignee` may be changed by the requester or by the current
@@ -246,6 +245,16 @@ metric §1.3's per-party validity rate.
 - With three or more parties, a docket without an assignee is the primary failure
   mode: every party assumes another is handling it. Implementations SHOULD surface
   unclaimed dockets prominently in `INDEX.md`.
+- **There is no addressing, deliberately (r015).** S4 was originally scoped as
+  *addressing and assignment*, and `to` was the addressing half. It shipped, and
+  then nothing ever read it: no reducer, index, scheduler or MCP path consumed a
+  recipient list, so a filing addressed to one party and assigned to another
+  behaved exactly like one with no `to` at all. Worse, parties wrote `to` meaning
+  *over to you* and the assignment stayed put, so the field actively absorbed the
+  intent that belonged in `assignee`. 0.3 removes it and narrows S4 to assignment.
+  Docket has no inbox, no notification and no per-recipient view; until something
+  exists that would *act* on a recipient, addressing is a promise the format
+  cannot keep. Informational addressing belongs in the body.
 
 ### FR-5 Resolution
 

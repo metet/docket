@@ -108,7 +108,7 @@ def main():
     # Both modes put the protocol and registry *in the store*: everything that
     # reads them (docket_lib.parties, docket-mcp, the AGENTS.md block) looks in
     # store/ first. A linked store that had neither could not resolve a party
-    # name at all, so from:/to:/assignee went silently unchecked.
+    # name at all, so from:/assignee went silently unchecked.
     for name in ("PROTOCOL.md", "PARTIES.md"):
         dst = os.path.join(store, name)
         if (os.path.exists(dst) or os.path.islink(dst)) and not a.force:

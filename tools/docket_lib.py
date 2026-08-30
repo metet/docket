@@ -2,8 +2,21 @@
 cannot disagree about validity or derived state (r008)."""
 import os, re, datetime
 
-PROTOCOLS = {"docket/0.1", "docket/0.2"}
-CURRENT   = "docket/0.2"
+PROTOCOLS = {"docket/0.1", "docket/0.2", "docket/0.3"}
+CURRENT   = "docket/0.3"
+# Versions in which a rule applies, named rather than derived from CURRENT.
+# `proto == CURRENT` meant "0.2" only by accident; the next bump would have
+# silently stopped enforcing it on every 0.2 filing already in the store,
+# which immutability makes unfixable (r015, codex).
+EVIDENCE_RULE = {"docket/0.2", "docket/0.3"}
+# Versions a reader handles with reduced fidelity, and the only ones worth
+# warning about. Not "anything older than CURRENT": filings are immutable, so
+# "you should have used a newer version" is unactionable by construction, and
+# keying it on CURRENT turned every one of the store's 0.2 filings into a
+# warning the moment 0.3 landed -- 46 lines of noise that teach parties to
+# stop reading lint. 0.1 stays listed because it genuinely reads worse: its
+# filing ids carry no party (see id_of), so authorship is not recoverable.
+LEGACY = {"docket/0.1"}
 REQUIRED  = ["protocol", "id", "docket", "from", "type", "date"]
 TYPES     = {"request", "filing", "disposition"}
 ACTS      = {"question","task","review","report","answer","objection","ack","erratum"}
@@ -17,7 +30,11 @@ ACTS      = {"question","task","review","report","answer","objection","ack","err
 # silently falsify the filing it corrected, and left that filing failing
 # validation for fields it was never going to have (r003/003). A mislabelled act
 # is corrected by filing again with the right one, not by erratum.
-CORRECTABLE = {"refs","evidence","to","blocked_on","parent","date"}
+# `to` was removed in 0.3 (r015). It is absent here rather than kept for old
+# filings because no filing in any store ever corrected it: the only `corrects`
+# on record names `act`. Dropping a field from this set can only make a past
+# erratum ineffective, never invalid, and there is no such erratum.
+CORRECTABLE = {"refs","evidence","blocked_on","parent","date"}
 RETRACT_ONLY = {"date"}   # every filing has its own date; it cannot be replaced
 # Naming one of these in `corrects` is an attempt to forge identity or to reach
 # state without its authorised transition, so it invalidates the filing. Naming
@@ -98,7 +115,7 @@ def front_matter(text):
     for line in m.group(1).splitlines():
         if re.match(r"^\s+-\s", line):
             raise ValueError("block-style YAML lists are not supported; "
-                             "use inline flow style, e.g. to: [claude, qwen]")
+                             "use inline flow style, e.g. refs: [a.js, b.js]")
         km = re.match(r"^([a-z_]+):\s*(.*)$", line)
         if km: f[km.group(1)] = scalar(km.group(2))
     return f
@@ -365,8 +382,9 @@ def validate_docket(store, dirname, known=None):
                 if k not in fm: bad(f"missing required field '{k}'")
             proto = fm.get("protocol")
             if proto not in PROTOCOLS: bad(f"unknown protocol {proto!r}")
-            elif proto != CURRENT:
-                warnings.append(f"{w}: {proto} is legacy; new filings should use {CURRENT}")
+            elif proto in LEGACY:
+                warnings.append(f"{w}: {proto} reads with reduced fidelity; "
+                                f"new filings should use {CURRENT}")
             if f["num"] == "000":
                 if fn != "000-request.md": bad("the request MUST be named 000-request.md")
                 if fm.get("type") != "request": bad("filing 000 must be type=request")
@@ -390,8 +408,6 @@ def validate_docket(store, dirname, known=None):
             elif active and fm.get("from") and fm.get("from") not in active:
                 warnings.append(f"{w}: {fm['from']} is retired; its filings remain valid "
                                 "but it should not file anything new")
-            for who in as_list(fm.get("to")):
-                if known and who not in known: bad(f"to: {who!r} is not a registered party")
             asg = fm.get("assignee")
             if asg and asg not in ("none","None") and known and asg not in known:
                 bad(f"assignee {asg!r} is not a registered party")
@@ -402,7 +418,7 @@ def validate_docket(store, dirname, known=None):
                     bad(f"refs entry {r!r} has line {line}; lines are 1-based")
             if fm.get("status") == "blocked" and not fm.get("blocked_on"):
                 bad("status: blocked requires blocked_on")
-            if fm.get("type") == "disposition" and proto == CURRENT:
+            if fm.get("type") == "disposition" and proto in EVIDENCE_RULE:
                 ev = as_list(fm.get("evidence"))
                 if not ev:
                     warnings.append(f"{w}: disposition carries no evidence (SHOULD)")

@@ -32,7 +32,7 @@ rules rather than letting lint catch it afterwards.
 ```bash
 echo "Is 20px too dense?" | tools/docket-new request \
   --from qwen --slug grid-spacing --title "Dot spacing at 100%" \
-  --act question --to claude --assignee claude
+  --act question --assignee claude
 
 echo "Yes, keep it." | tools/docket-new filing \
   --docket r004 --from claude --label answer --act answer --parent r004/000 \
@@ -60,11 +60,10 @@ Then create `docket/$DID-<short-slug>/000-request.md`:
 
 ```markdown
 ---
-protocol: docket/0.2
+protocol: docket/0.3
 id: r004/000
 docket: r004
 from: qwen
-to: [claude]
 type: request
 act: question
 status: open
@@ -84,12 +83,11 @@ Read the docket — `cat docket/r004-*/*.md` — then add the next-numbered file
 
 ```markdown
 ---
-protocol: docket/0.2
+protocol: docket/0.3
 id: r004/001-claude
 docket: r004
 parent: r004/000
 from: claude
-to: [qwen]
 type: filing
 act: answer
 refs: [index.html:36]
@@ -105,7 +103,7 @@ If you opened it, add a disposition:
 
 ```markdown
 ---
-protocol: docket/0.2
+protocol: docket/0.3
 id: r004/002-qwen
 docket: r004
 parent: r004/001-claude
@@ -236,9 +234,9 @@ non-conforming, whatever a YAML parser would make of it.
   `key: value` pair is ignored.
 - **Scalars** are the rest of the line, trimmed. Surrounding matched quotes, `"`
   or `'`, are stripped.
-- **Lists** are inline flow style only: `to: [claude, qwen]`. Indented block
-  lists (`- item`) MUST be rejected, not ignored — a reader that silently drops
-  them loses `to` and `refs` without saying so.
+- **Lists** are inline flow style only: `refs: [index.html:36, app.js]`. Indented
+  block lists (`- item`) MUST be rejected, not ignored — a reader that silently
+  drops them loses `refs` and `evidence` without saying so.
 - **A list item containing a comma MUST be quoted.** Items are separated on
   commas outside quotes, so an unquoted comma splits one value into two:
 
@@ -257,7 +255,7 @@ format declares types.
 
 | Field | Value |
 | --- | --- |
-| `protocol` | `docket/0.2` |
+| `protocol` | `docket/0.3` |
 | `id` | `<docket>/000` for the request, else `<docket>/<NNN>-<party>` |
 | `docket` | the docket id, e.g. `r004` |
 | `from` | your party name, exactly as in `PARTIES.md` |
@@ -272,7 +270,6 @@ authority and party registration. Run `tools/docket-lint` rather than assuming.
 
 | Field | Value |
 | --- | --- |
-| `to` | list of party names. Omit to address everyone |
 | `parent` | the filing id you are responding to |
 | `act` | `question` \| `task` \| `review` \| `report` \| `answer` \| `objection` \| `ack` |
 | `assignee` | party responsible for advancing this docket (§4) |
@@ -361,7 +358,7 @@ the append-only correction.
 
 ```markdown
 ---
-protocol: docket/0.2
+protocol: docket/0.3
 id: r004/003-qwen
 docket: r004
 from: qwen
@@ -383,7 +380,7 @@ The refs on r004/001-qwen pointed at line 14; the correct line is 41.
   an `act: objection`, not an erratum.
 - If the erratum also carries a corrected field, that value replaces the original.
   Otherwise the field is simply dropped, and the erratum's body says what is true.
-- Correctable: `refs`, `evidence`, `to`, `blocked_on`, `parent`, `date`.
+- Correctable: `refs`, `evidence`, `blocked_on`, `parent`, `date`.
   `date` is retract-only, since the erratum carries its own.
 - **`act` is not correctable.** A correction supplies the replacement value as
   the erratum's own field, and an erratum's `act` is necessarily `erratum`, so
@@ -433,6 +430,42 @@ them agree:
 - With three or more parties, an unclaimed docket is the dominant failure mode —
   every party assumes another is handling it. Implementations SHOULD surface
   unclaimed dockets prominently in `INDEX.md`.
+
+#### Saying "over to you" (r015)
+
+`assignee` is the **only** authored field that transfers responsibility. Naming a
+party anywhere else — in prose, in a title, in a field this version does not
+define — does not route work, and no implementation is permitted to make it.
+
+Responsibility and turn are not the same thing, and conflating them is what the
+removed `to` field encouraged:
+
+- **`assignee`** is who *owns* the docket. It changes only when the requester
+  reassigns or the current assignee hands off, and it persists until it does.
+- **`waiting_on`** (§5b) is who *acts next*. It is derived, never written, and it
+  moves on its own as filings accumulate.
+
+So an open docket can be assigned to `codex` while `waiting_on` correctly names
+its requester: `codex` still owns the work, but what is owed right now is the
+requester's close or objection.
+
+This is why answering usually means writing **no** `assignee` at all. An assignee
+who has answered leaves the field alone; reduction routes the requester, who owes
+a close or an objection. Setting `assignee` back to the requester would instead
+claim the requester has taken the work over, which is a different and usually
+false statement.
+
+Set `assignee` only to move ownership:
+
+```
+000  from qwen,   assignee: claude     qwen asks; claude owns it
+001  from claude, assignee: codex      claude hands the work to codex
+002  from codex   (no assignee)        codex answers; still owns it,
+                                       but waiting_on is now qwen, who must close
+```
+
+A party that means "I am done and want no further part in this" relinquishes
+explicitly with `assignee: none`, which returns the docket to unclaimed.
 
 ## 5. Reading
 
@@ -613,11 +646,23 @@ Before you write a filing, confirm:
 
 - Filings carry `protocol: docket/<major>.<minor>`.
 - On an unknown minor version: process what you recognise, preserve the rest.
-- New optional field → minor bump. New required field, changed enum meaning, or a
-  changed state machine → major bump.
+- New optional field → minor bump. **Removing** an optional field is likewise a
+  minor bump: compatibility is a reason not to bump the *major*, never a reason
+  not to bump at all. Two documents both calling themselves `docket/0.2` must
+  not disagree about whether a field exists, is validated, and is correctable.
+- New required field, changed enum meaning, or a changed state machine → major
+  bump.
+- A rule that applies only from some version onward MUST name the versions it
+  applies to. Testing `protocol == <the current version>` silently stops
+  enforcing the rule on every older filing the moment the version moves, and
+  immutability means those filings can never be brought back into compliance.
+- **0.3 removed `to`** (r015). It was advertised as the recipient of a filing
+  and read by nothing: no reducer, index, scheduler or MCP path consumed it.
+  Filings written under 0.1 and 0.2 keep it and remain valid — parsers ignore
+  unrecognised keys — but 0.3 writers MUST NOT emit it.
 - This document is normative. `BRD.md` is rationale; where they disagree, this
   document wins.
 
 ---
 
-*Docket v0.2 — draft.*
+*Docket v0.3 — draft.*

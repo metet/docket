@@ -77,7 +77,7 @@ def main():
     p.add_argument("--from", dest="frm", required=True, metavar="PARTY")
     p.add_argument("--title", required=True)
     p.add_argument("--slug"); p.add_argument("--docket"); p.add_argument("--label")
-    p.add_argument("--act"); p.add_argument("--to"); p.add_argument("--assignee")
+    p.add_argument("--act"); p.add_argument("--assignee")
     p.add_argument("--parent"); p.add_argument("--status"); p.add_argument("--blocked-on")
     p.add_argument("--supersedes", metavar="FILING_ID"); p.add_argument("--corrects", metavar="FIELDS")
     p.add_argument("--refs"); p.add_argument("--evidence"); p.add_argument("--body")
@@ -90,8 +90,6 @@ def main():
     if known and a.frm not in known:
         die(f"party {a.frm!r} is not registered in PARTIES.md {sorted(known)}")
     if a.act and a.act not in ACTS: die(f"act {a.act!r} not in {sorted(ACTS)}")
-    for who in (x.strip() for x in (a.to or "").split(",") if x.strip()):
-        if known and who not in known: die(f"--to {who!r} is not a registered party")
     if a.assignee and a.assignee not in ("none","None") and known and a.assignee not in known:
         die(f"--assignee {a.assignee!r} is not a registered party")
     if a.status and a.status not in STATUSES: die(f"status {a.status!r} not in {sorted(STATUSES)}")
@@ -166,7 +164,7 @@ def main():
     front = fm_lines({
         "protocol": CURRENT, "id": fid, "docket": did,
         "parent": a.parent, "supersedes": a.supersedes, "corrects": lst(a.corrects),
-        "from": a.frm, "to": lst(a.to),
+        "from": a.frm,
         "type": typ, "act": a.act, "status": status,
         "assignee": a.assignee, "blocked_on": a.blocked_on,
         "refs": lst(a.refs), "evidence": lst(a.evidence), "date": now,

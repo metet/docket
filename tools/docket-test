@@ -31,6 +31,18 @@ def fresh():
     d = tempfile.mkdtemp(prefix="dk-")
     subprocess.run(["python3", os.path.join(D,"tools","docket-init"), d, "--link"],
                    capture_output=True, text=True)
+    # --link symlinks PROTOCOL.md and PARTIES.md back into THIS repository, so a
+    # test that writes one edits the developer's own store. Break the links: a
+    # temp store must be inert. (Found the hard way -- a test wrote PARTIES.md
+    # through the link and truncated the real registry to four lines. Same class
+    # as T14's inherited GIT_DIR and T22's leaked GIT_AUTHOR_NAME: the harness
+    # reaching outside its sandbox.)
+    for name in ("PROTOCOL.md", "PARTIES.md"):
+        q = os.path.join(d, "docket", name)
+        if os.path.islink(q):
+            real = os.path.realpath(q)
+            os.remove(q)
+            shutil.copy2(real, q)
     return d
 
 def check(tid, desc, cond, detail=""):
@@ -50,7 +62,7 @@ check("T2", "malformed tools/call -> JSON-RPC error", "error" in m,
 # ---- T3: docket_list party matching ----
 d = fresh()
 server([INIT, tc("docket_open", {"slug":"q","title":"Q","body":"b","act":"question",
-                                 "to":"qwen","assignee":"qwen"})], party="claude", cwd=d)
+                                 "assignee":"qwen"})], party="claude", cwd=d)
 def listing(party):
     _, out, _ = server([INIT, tc("docket_list", {})], party=party, cwd=d)
     return out[-1]["result"]["content"][0]["text"]
@@ -69,11 +81,18 @@ ev = [l for l in open(os.path.join(d,"docket","r001-q","001-qwen-answer.md")).re
 check("T4", "list evidence serialised cleanly", ev == ["evidence: [git:58f22c6, pytest passing]"], str(ev))
 shutil.rmtree(d)
 
-# ---- T5: docket_file schema exposes assignee and to ----
+# ---- T5: docket_file schema exposes assignee, and no longer `to` ----
 _, out, _ = server([INIT, {"jsonrpc":"2.0","id":4,"method":"tools/list"}])
 tools = {t["name"]: t for t in out[-1]["result"]["tools"]}
 props = set(tools["docket_file"]["inputSchema"]["properties"])
-check("T5", "docket_file exposes assignee+to", {"assignee","to"} <= props, str(sorted(props)))
+check("T5", "docket_file exposes assignee", "assignee" in props, str(sorted(props)))
+# r015 removed `to`. Asserted on both write tools, because a schema is the only
+# thing a party sees before it files: leaving the argument advertised would keep
+# parties supplying a field nothing reads.
+check("T5", "docket_file no longer advertises `to`", "to" not in props, str(sorted(props)))
+check("T5", "docket_open no longer advertises `to`",
+      "to" not in set(tools["docket_open"]["inputSchema"]["properties"]),
+      str(sorted(tools["docket_open"]["inputSchema"]["properties"])))
 
 # ---- T6: erratum either works or is not advertised ----
 acts = tools["docket_file"]["inputSchema"]["properties"]["act"]["enum"]
@@ -748,6 +767,67 @@ dn2("filing", docket="r002", **{"from": "codex", "act": "answer",
                                 "body": "b"})
 check("T23", "relinquishing does not leave the docket routed to the leaver",
       route(st_, "r002-u") == (None, "qwen"), str(route(st_, "r002-u")))
+shutil.rmtree(d)
+
+# ---- T24: a 0.2 filing carrying `to` survives the 0.3 removal (r015) ----
+# Filings are immutable, so 35 of them keep a field the schema no longer defines.
+# Removal is only safe if reading them is unchanged -- lint has no closed key set
+# (docket_lib:364 checks REQUIRED, not "no others"), and this pins that.
+d = fresh(); st_ = os.path.join(d, "docket")
+os.makedirs(os.path.join(st_, "r001-legacy"))
+os.makedirs(os.path.join(st_, ".seq", "r001"))   # docket-new reserves this
+def legacy(name, text):
+    open(os.path.join(st_, "r001-legacy", name), "w").write(text)
+
+legacy("000-request.md", """---
+protocol: docket/0.2
+id: r001/000
+docket: r001
+from: qwen
+to: [claude]
+type: request
+act: question
+status: open
+assignee: claude
+date: 2026-08-29T15:30:00Z
+---
+
+Legacy request carrying `to`.
+""")
+legacy("001-claude-answer.md", """---
+protocol: docket/0.2
+id: r001/001-claude
+docket: r001
+parent: r001/000
+from: claude
+to: [qwen, nobody-by-this-name]
+type: filing
+act: answer
+date: 2026-08-29T15:41:00Z
+---
+
+Answer carrying a `to` that names an unregistered party.
+""")
+_f, _inv, errs, warns, st = _L.validate_docket(st_, "r001-legacy", _L.parties(st_))
+check("T24", "a 0.2 filing with `to` still validates", errs == [], str(errs))
+check("T24", "`to` naming an unregistered party is no longer an error", errs == [], str(errs))
+# Not merely "no `to` warning": no warning at all. A version bump must not turn
+# every immutable filing already in the store into a diagnostic, which is what
+# warning on `proto != CURRENT` did the moment 0.3 landed.
+check("T24", "a 0.2 filing produces no warning at all", warns == [], str(warns))
+check("T24", "0.2 is not treated as reduced-fidelity", "docket/0.2" not in _L.LEGACY,
+      str(sorted(_L.LEGACY)))
+check("T24", "reduction is unchanged by the presence of `to`",
+      (st["assignee"], st["waiting_on"]) == ("claude", "qwen"),
+      str((st["assignee"], st["waiting_on"])))
+check("T24", "0.2 is still an accepted protocol version", "docket/0.2" in _L.PROTOCOLS,
+      str(sorted(_L.PROTOCOLS)))
+check("T24", "the disposition-evidence rule still names 0.2",
+      "docket/0.2" in _L.EVIDENCE_RULE, str(sorted(_L.EVIDENCE_RULE)))
+check("T24", "docket-new no longer accepts --to",
+      dn2("filing", docket="r001", **{"from": "qwen", "act": "answer", "title": "T",
+                                      "body": "b", "to": "claude"}).returncode != 0,
+      "--to was accepted")
 shutil.rmtree(d)
 
 # ---- report ----
