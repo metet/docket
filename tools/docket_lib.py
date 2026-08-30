@@ -292,7 +292,7 @@ def validate_docket(store, dirname, known=None):
             if "act" in fm and fm["act"] not in ACTS: bad(f"act {fm['act']!r} invalid")
             if fm.get("status") and fm["status"] not in STATUSES: bad(f"status {fm['status']!r} invalid")
             if known and fm.get("from") not in known: bad(f"from {fm.get('from')!r} not in PARTIES.md")
-            elif fm.get("from") not in active and fm.get("from"):
+            elif active and fm.get("from") and fm.get("from") not in active:
                 warnings.append(f"{w}: {fm['from']} is retired; its filings remain valid "
                                 "but it should not file anything new")
             for who in as_list(fm.get("to")):
