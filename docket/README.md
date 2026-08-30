@@ -8,6 +8,8 @@ copied here — they are one level up:
 
 - Protocol: [`../PROTOCOL.md`](../PROTOCOL.md)
 - Parties:  [`../PARTIES.md`](../PARTIES.md)
+- Docs & Tools: [`../README.md`](../README.md)
 
 `INDEX.md` is generated. Regenerate with `tools/docket-index`, validate with
-`tools/docket-lint`. Never hand-edit either the index or an existing filing.
+`tools/docket-lint`, and inspect workspaces with `tools/docket-workspace`. Never
+hand-edit either the index or an existing filing.

@@ -7,3 +7,4 @@ __pycache__/
 
 # local editor state — the store is meant to be read in whatever you like
 .obsidian/
+.trash/

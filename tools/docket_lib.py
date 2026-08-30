@@ -406,3 +406,77 @@ def dockets(store):
     """Docket directory names, in order."""
     return [d for d in sorted(os.listdir(store))
             if os.path.isdir(os.path.join(store, d)) and re.match(r"^r\d{3}", d)]
+
+def workspaces_config_path():
+    """Path to the workspaces configuration file.
+    Checks DOCKET_WORKSPACES_FILE environment variable, then:
+      ~/.config/docket/workspaces      (plain text list of paths, one per line)
+      ~/.config/docket/workspaces.json (JSON: {"workspaces": [...]})
+    """
+    env = os.environ.get("DOCKET_WORKSPACES_FILE")
+    if env:
+        return os.path.abspath(env)
+    cfg_dir = os.path.expanduser("~/.config/docket")
+    txt = os.path.join(cfg_dir, "workspaces")
+    js  = os.path.join(cfg_dir, "workspaces.json")
+    if os.path.exists(txt):
+        return txt
+    if os.path.exists(js):
+        return js
+    return txt
+
+def load_workspaces():
+    """List of absolute workspace paths configured by the user.
+    Supports plain text (one path per line, # comments ignored) or JSON.
+    """
+    path = workspaces_config_path()
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        if not content:
+            return []
+        if path.endswith(".json") or content.startswith("{") or content.startswith("["):
+            import json
+            data = json.loads(content)
+            ws = data.get("workspaces", []) if isinstance(data, dict) else data
+            return [os.path.abspath(os.path.expanduser(p)) for p in ws if isinstance(p, str) and p.strip()]
+        lines = []
+        for line in content.splitlines():
+            line = line.split("#")[0].strip()
+            if line:
+                lines.append(os.path.abspath(os.path.expanduser(line)))
+        return lines
+    except Exception:
+        return []
+
+def save_workspaces(paths):
+    """Save the list of workspace paths to the configured file."""
+    path = workspaces_config_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    cleaned = []
+    for p in paths:
+        p_abs = os.path.abspath(os.path.expanduser(p))
+        if p_abs not in cleaned:
+            cleaned.append(p_abs)
+    if path.endswith(".json"):
+        import json
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"workspaces": cleaned}, f, indent=2)
+            f.write("\n")
+    else:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# Docket trusted workspaces (one path per line)\n")
+            for p in cleaned:
+                f.write(f"{p}\n")
+
+def match_workspace(target_path):
+    """Find the configured workspace that contains target_path (if any)."""
+    target = os.path.abspath(os.path.expanduser(target_path))
+    best_match = None
+    for ws in load_workspaces():
+        if target == ws or target.startswith(ws + os.sep):
+            if best_match is None or len(ws) > len(best_match):
+                best_match = ws
+    return best_match

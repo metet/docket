@@ -257,6 +257,42 @@ asked, out, is_err = roots_session({"roots":{}}, None, cwd=d)
 check("T14", "no roots round trip when cwd already works", not asked and not is_err, out[:60])
 shutil.rmtree(d); shutil.rmtree(outside)
 
+# ---- T15: workspace allowlist resolution and CLI ----
+d1 = fresh()
+d2 = fresh()
+outside = tempfile.mkdtemp(prefix="dk-outside-")
+ws_cfg = os.path.join(outside, "workspaces")
+open(ws_cfg, "w").write(f"{d1}\n{d2}\n")
+
+# Test match_workspace via DOCKET_WORKSPACES_FILE
+env_ws = dict(os.environ, DOCKET_WORKSPACES_FILE=ws_cfg)
+p_cli = subprocess.run(["python3", os.path.join(D, "tools", "docket-workspace"), "list"],
+                       capture_output=True, text=True, env=env_ws)
+check("T15", "docket-workspace list sees configured workspaces",
+      d1 in p_cli.stdout and d2 in p_cli.stdout, p_cli.stdout[:80])
+
+# Test MCP resolves via trusted workspace matching cwd
+env_mcp = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE="docket",
+               DOCKET_WORKSPACES_FILE=ws_cfg)
+pr = subprocess.run(["python3", MCP],
+                    input=json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                                     "params":{"name":"docket_list","arguments":{}}}) + "\n",
+                    capture_output=True, text=True, cwd=d1, env=env_mcp)
+out_mcp = json.loads(pr.stdout)
+check("T15", "MCP resolves store via trusted workspace",
+      not out_mcp["result"]["isError"], str(out_mcp)[:80])
+
+# Test workspace='all' aggregates across workspaces
+pr_all = subprocess.run(["python3", MCP],
+                        input=json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/call",
+                                         "params":{"name":"docket_list","arguments":{"workspace":"all"}}}) + "\n",
+                        capture_output=True, text=True, cwd=outside, env=env_mcp)
+out_all = json.loads(pr_all.stdout)
+check("T15", "docket_list workspace=all runs without error",
+      not out_all["result"]["isError"], str(out_all)[:80])
+
+shutil.rmtree(d1); shutil.rmtree(d2); shutil.rmtree(outside)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0
