@@ -56,7 +56,10 @@ TOOLS = [
        "body":     S("the full request, in Markdown"),
        "act":      {"type": "string", "enum": ["question","task","review","report"]},
        "to":       S("comma-separated party names"),
-       "assignee": S("party responsible for advancing it")},
+       "assignee": S("party responsible for advancing it"),
+       "status":   {"type": "string", "enum": ["open", "resolved"],
+                    "description": "defaults to open, or resolved for act: report. "
+                                   "Set open on a report that does need a reply."}},
     "required": ["slug", "title", "body"]}},
   {"name": "docket_file",
    "description": "Add a filing to an existing docket — an answer, an objection, an "
