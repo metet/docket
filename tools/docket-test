@@ -567,6 +567,117 @@ check("T21", "a scar in a closed docket is still reported",
       closed.replace("\n", "|")[:140])
 shutil.rmtree(d)
 
+# ---- T22: git attribution matches the filings a commit carries (r013) ----
+# Every party is the same OS user pushing the same key, so none of this
+# authenticates anybody. It catches the honest mistake: a clone-wide
+# `git config user.name` leaks one party's identity onto the next party's
+# commit, which is worse than the placeholder because it reads as an answer.
+COMMIT = os.path.join(D, "tools", "docket-commit")
+HOOKS  = os.path.join(D, "tools", "git-hooks")
+
+# Every GIT_* variable must go. This suite runs from the pre-commit hook, which
+# exports GIT_DIR, GIT_INDEX_FILE and -- once docket-commit is what invoked it --
+# GIT_AUTHOR_NAME. Inherited, they point these throwaway repos back at the real
+# one and author its commits as whoever is committing, so the checks below would
+# measure the developer's machine rather than the hook. Same defect as T14.
+GENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+def git(d, *a):
+    return subprocess.run(["git", *a], cwd=d, capture_output=True, text=True, env=GENV)
+
+def repo():
+    d = fresh()
+    for a in (["init", "-q", "."], ["config", "user.name", "Your Name"],
+              ["config", "user.email", "you@example.com"],
+              ["config", "core.hooksPath", HOOKS]):
+        git(d, *a)
+    open(os.path.join(d, "README.md"), "w").write("seed\n")
+    git(d, "add", "README.md")
+    git(d, "commit", "-qm", "seed")
+    return d
+
+def newf(d, **kw):
+    args = ["python3", os.path.join(D, "tools", "docket-new"), kw.pop("kind"),
+            "--store", "docket"]
+    for k, v in kw.items():
+        args += ["--" + k.replace("_", "-"), v]
+    return subprocess.run(args, cwd=d, capture_output=True, text=True)
+
+def stage(d, *paths):
+    git(d, "add", *paths)
+
+def commit(d, party=None, msg="m"):
+    cmd = (["python3", COMMIT, "--from", party] if party else ["git", "commit"])
+    return subprocess.run([*cmd, "-m", msg], cwd=d, capture_output=True,
+                          text=True, env=GENV)
+
+def show(d, fmt):
+    return git(d, "log", "-1", "--format=" + fmt).stdout.strip()
+
+d = repo()
+newf(d, kind="request", **{"from": "claude", "slug": "x", "title": "X",
+                           "act": "task", "body": "b"})
+newf(d, kind="filing", docket="r001", **{"from": "claude", "act": "answer",
+                                         "title": "A", "body": "b"})
+newf(d, kind="filing", docket="r001", **{"from": "agy", "act": "answer",
+                                         "title": "B", "body": "b"})
+dk = "docket/r001-x"
+
+stage(d, "docket/.seq", "docket/INDEX.md", dk + "/000-request.md",
+      dk + "/001-claude-answer.md")
+r = commit(d, "claude", "r001: claude answers")
+check("T22", "a party commits its own filing", r.returncode == 0, r.stderr[:120])
+check("T22", "the author is the party, not the placeholder",
+      show(d, "%an") == "claude", show(d, "%an"))
+check("T22", "the committer is left alone",
+      show(d, "%cn") == "Your Name", show(d, "%cn"))
+check("T22", "the party is recorded in a trailer",
+      show(d, "%(trailers:key=Docket-Party,valueonly)").strip() == "claude",
+      show(d, "%(trailers:key=Docket-Party,valueonly)"))
+
+# Committing someone else's filing under your own name: §5b says a party commits
+# only what it created, and this is that rule seen from the attribution side.
+stage(d, dk + "/002-agy-answer.md")
+r = commit(d, "claude", "sweeping up")
+check("T22", "committing another party's filing is refused", r.returncode == 1,
+      r.stderr.strip().splitlines()[-1][:120] if r.stderr.strip() else "")
+check("T22", "the refusal names the party it should have been",
+      "agy" in r.stderr, r.stderr[:120])
+
+# A refused commit leaves its files staged, so clear the index before the next
+# case -- otherwise agy's filing is still staged and the next check measures it
+# rather than what it meant to.
+def reset(d):
+    git(d, "reset", "-q")
+
+reset(d)
+newf(d, kind="filing", docket="r001", **{"from": "claude", "act": "answer",
+                                         "title": "C", "body": "b"})
+
+# The leaked-identity case this exists for: config is clone-wide, so a plain
+# commit after `git config user.name agy` authors claude's filing as agy.
+git(d, "config", "user.name", "agy")
+stage(d, dk + "/003-claude-answer.md", "docket/INDEX.md")
+r = commit(d, None, "plain commit under a leaked identity")
+check("T22", "a leaked clone-wide identity is caught", r.returncode == 1,
+      r.stderr.strip().splitlines()[-1][:120] if r.stderr.strip() else "")
+
+# The human owns the repo and does not answer to this hook.
+git(d, "config", "user.name", "Your Name")
+r = commit(d, None, "no party named")
+check("T22", "an unnamed party is warned, never blocked", r.returncode == 0,
+      r.stderr[:120])
+check("T22", "the warning says what to do instead",
+      "docket-commit" in r.stderr, r.stderr[:120])
+
+# A tooling change has no filing to disagree with, so it must stay silent.
+open(os.path.join(d, "README.md"), "a").write("more\n")
+stage(d, "README.md")
+r = commit(d, None, "tooling only")
+check("T22", "a commit with no filings is not policed",
+      r.returncode == 0 and "commit-msg:" not in r.stderr, r.stderr[:120])
+shutil.rmtree(d)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0

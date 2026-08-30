@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Refuse a commit whose declared party contradicts the filings it carries.
+
+Attribution in the store is strong -- a filing's path names its author (§1) --
+and attribution in git is not: every party runs as the same OS user, from the
+same clone, pushing the same key, so nothing here authenticates anyone. This
+hook does not try to. It checks the two records against each other and blocks
+the case where they disagree, which is the mistake an honest party makes.
+
+The mistake it exists for: `git config user.name agy` sets the identity for the
+whole clone, so the NEXT party's commit is authored `agy` too. That produces
+confidently wrong attribution, which is worse than no attribution at all,
+because it looks like an answer. `docket-commit` passes identity per invocation
+for this reason, and this hook catches it when something else does not.
+
+It also enforces the standing rule that a party commits only files it created
+(§5b), which is the same comparison seen from the other side.
+
+Deliberately NOT enforced:
+
+- A commit whose author is not a party name -- the human committing tooling, or
+  an unconfigured clone. Warned about, never blocked: the human owns the repo
+  and does not answer to this hook.
+- A commit staging no filings at all. Tooling changes have no party to check.
+- WHICH BRANCH a commit lands on. A party committing its own filing onto another
+  party's branch passes every check here, correctly -- the filing is its own and
+  the attribution is honest. Concurrent writes to one shared working tree are a
+  different problem and want a different fix.
+
+Install with the rest of the hooks:  git config core.hooksPath tools/git-hooks
+Bypass with `git commit --no-verify` when you mean to.
+"""
+import os, re, subprocess, sys
+
+# <NNN>-<party>-<label>.md per §1. An opening filing is 000-request.md, which
+# names no party -- that is a gap in the naming rule, not a fault in the commit,
+# so such files simply contribute nothing to compare against.
+FILING = re.compile(r"^\d+-([a-z0-9]+)-.+\.md$")
+
+
+def git(*args):
+    p = subprocess.run(["git", *args], capture_output=True, text=True)
+    return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def declared_party(msg):
+    """The party this commit claims to be, or None if it claims nothing."""
+    for line in msg.splitlines():
+        if line.lower().startswith("docket-party:"):
+            return line.split(":", 1)[1].strip() or None
+    # Fall back to the author name, but only when it looks like a party name.
+    # "Your Name" is the unconfigured default and claims nothing.
+    ident = git("var", "GIT_AUTHOR_IDENT")
+    name = ident.split(" <")[0].strip() if ident else ""
+    return name if re.fullmatch(r"[a-z0-9]+", name) else None
+
+
+def staged_parties(store):
+    out = git("diff", "--cached", "--name-only", "--diff-filter=ACM", "--", store)
+    found = set()
+    for path in out.splitlines():
+        m = FILING.match(os.path.basename(path.strip()))
+        if m:
+            found.add(m.group(1))
+    return found
+
+
+def main():
+    if len(sys.argv) < 2:
+        return 0
+    try:
+        msg = open(sys.argv[1], encoding="utf-8").read()
+    except OSError:
+        return 0
+
+    store = os.environ.get("DOCKET_STORE", "docket")
+    root = git("rev-parse", "--show-toplevel")
+    if root:
+        os.chdir(root)
+    if not os.path.isdir(store):
+        return 0
+
+    parties = staged_parties(store)
+    if not parties:
+        return 0
+
+    who = declared_party(msg)
+    if who is None:
+        sys.stderr.write(
+            "commit-msg: this commit carries filings by "
+            + ", ".join(sorted(parties))
+            + " but names no party.\n"
+              "  git log will not say who wrote them. Commit with\n"
+              "  tools/docket-commit --from <party> -m ... , or add a\n"
+              "  'Docket-Party: <party>' trailer. Not blocking.\n")
+        return 0
+
+    wrong = parties - {who}
+    if wrong:
+        sys.stderr.write(
+            f"commit-msg: this commit is authored '{who}' but stages filings by "
+            + ", ".join(sorted(wrong)) + ".\n"
+              "  A party commits only files it created (PROTOCOL.md 5b), and an\n"
+              "  author that disagrees with the filings is worse than none --\n"
+              "  it reads as an answer. Either commit as the right party:\n"
+              f"    tools/docket-commit --from {sorted(wrong)[0]} -m ...\n"
+              "  or unstage what is not yours. Bypass with --no-verify.\n")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

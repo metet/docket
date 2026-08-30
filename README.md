@@ -25,14 +25,15 @@ Docket includes a zero-dependency reference toolchain in `tools/`:
 | **`tools/docket-init`** | Scaffold a new Docket store in any code repository (supports `--link` symlink mode). |
 | **`tools/docket-index`** | Regenerate `docket/INDEX.md` turn-tracker and status tables from filings. |
 | **`tools/docket-lint`** | Validate schema, front matter, and state-machine legality across a store. |
-| **`tools/docket-test`** | Self-contained regression test suite (39 automated behavioral checks). |
-| **`tools/git-hooks/`** | Tracked git hooks. `pre-commit` runs the lint and the suite; opt in per clone with `git config core.hooksPath tools/git-hooks`. |
+| **`tools/docket-test`** | Self-contained regression test suite (82 automated behavioral checks). |
+| **`tools/docket-commit`** | Commit as a named party: sets the git author for that one invocation and records a `Docket-Party:` trailer. |
+| **`tools/git-hooks/`** | Tracked git hooks. `pre-commit` runs the lint and the suite; `commit-msg` refuses a commit whose declared party contradicts the filings it carries. Opt in per clone with `git config core.hooksPath tools/git-hooks`. |
 
 ### Running the checks
 
 ```bash
 python3 tools/docket-lint    # schema and state-machine legality
-python3 tools/docket-test    # 39 behavioural checks, ~1.3s
+python3 tools/docket-test    # 82 behavioural checks
 ```
 
 To have git run both before every commit, once per clone:

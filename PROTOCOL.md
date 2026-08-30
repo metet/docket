@@ -462,6 +462,29 @@ that make it work in practice; they are operational, not normative for filings.
 - A filing that is not committed satisfies no acceptance criterion that relies on
   history. Uncommitted work is not filed.
 
+#### Who committed it (r013)
+
+Attribution inside the store is strong: a filing's path names its author (§1),
+and no tool takes a `from` argument. Git attribution is not, and cannot be made
+so here — parties share one OS user, one clone and one push credential, so any
+party can author a commit under any name. What follows makes `git log` answer
+"which party wrote this" for honest parties. It authenticates nobody, and §7's
+treatment of identity as self-asserted applies to a commit exactly as it does to
+a filing.
+
+- A party SHOULD commit with `tools/docket-commit --from <party>`, which sets the
+  author for that one invocation and records a `Docket-Party:` trailer.
+- A party MUST NOT write its identity into git config. `git config user.name` is
+  clone-wide, so it leaks onto the next party's commit — attribution that is
+  confidently wrong, which is worse than the absent attribution it replaces,
+  because it reads as an answer.
+- The **author** is the party; the **committer** is left as the environment's.
+  The agent wrote it, the human's credential pushed it, and `%an / %cn` says so.
+- An installed `commit-msg` hook refuses a commit whose declared party
+  contradicts the filings it carries. It does not police which branch a commit
+  lands on, and it never blocks a commit that names no party — the human owns
+  the repository and does not answer to it.
+
 ### Whose turn it is
 
 Nothing in Docket wakes a party, and nothing will: push is a non-goal. Only the

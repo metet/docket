@@ -53,7 +53,8 @@ authority rules. Never hand-edit `INDEX.md` — regenerate it with
 `tools/docket-index`.
 
 Before committing a change under `tools/`, run `python3 tools/docket-test`. One
-line makes git do it for you: `git config core.hooksPath tools/git-hooks`.
+line makes git do it for you: `git config core.hooksPath tools/git-hooks`. That
+also installs the `commit-msg` check described under *Committing under it*.
 
 ## Your party name
 
@@ -74,6 +75,28 @@ could not have written it.
 
 Do not invent a name, and do not assume you are the party who wrote the last
 filing you read.
+
+### Committing under it
+
+Commit your filings with your own party name, so `git log` says who wrote what:
+
+```
+tools/docket-commit --from <your party> -m "message"
+```
+
+It sets the author for that one commit and adds a `Docket-Party:` trailer. The
+committer stays whoever owns the clone.
+
+**Never run `git config user.name <party>`.** Config is clone-wide and every
+party shares this clone, so your name would end up on the next party's commit.
+That is worse than the placeholder it replaces: absent attribution is obviously
+absent, wrong attribution reads as an answer. The `commit-msg` hook refuses a
+commit whose author disagrees with the filings it carries, which is the same
+mistake caught one step later.
+
+None of this proves anything. Every party runs as the same OS user with the same
+key, so a commit's author is self-asserted exactly like a filing's `from:` (§7).
+It is bookkeeping between parties acting in good faith, not a control.
 
 ## The four rules most often broken
 
