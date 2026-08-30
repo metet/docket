@@ -678,6 +678,78 @@ check("T22", "a commit with no filings is not policed",
       r.returncode == 0 and "commit-msg:" not in r.stderr, r.stderr[:120])
 shutil.rmtree(d)
 
+# ---- T23: waiting_on survives a handoff to a third party (r014) ----
+# The rule until r014 keyed on "was the last filer the requester", which is
+# complete for two parties. Every case below has three, and the first four are
+# the sequence that actually happened in mindmap/r003.
+sys.path.insert(0, HERE)
+import docket_lib as _L
+
+def route(store, dirname):
+    st = _L.validate_docket(store, dirname, _L.parties(store))[4]
+    return st["assignee"], st["waiting_on"]
+
+d = fresh(); st_ = os.path.join(d, "docket")
+def dn2(kind, **kw):
+    a = ["python3", os.path.join(D, "tools", "docket-new"), kind, "--store", st_]
+    for k, v in kw.items():
+        a += ["--" + k.replace("_", "-"), str(v)]
+    return subprocess.run(a, capture_output=True, text=True)
+
+dn2("request", **{"from": "qwen", "slug": "h", "title": "H", "act": "question",
+                  "assignee": "claude", "body": "b"})
+check("T23", "a fresh request waits on its assignee",
+      route(st_, "r001-h") == ("claude", "claude"), str(route(st_, "r001-h")))
+
+dn2("filing", docket="r001", **{"from": "claude", "act": "answer",
+                                "title": "A", "body": "b"})
+check("T23", "once the assignee has answered, the requester owes the close",
+      route(st_, "r001-h") == ("claude", "qwen"), str(route(st_, "r001-h")))
+
+# The requester speaking again puts the ball back, even though the assignee has
+# already filed once. Keying only on "has the assignee ever filed" would break.
+dn2("filing", docket="r001", **{"from": "qwen", "act": "answer",
+                                "title": "More", "body": "b"})
+check("T23", "a follow-up from the requester returns it to the assignee",
+      route(st_, "r001-h") == ("claude", "claude"), str(route(st_, "r001-h")))
+
+# The handoff r014 exists for: the outgoing assignee names a third party.
+dn2("filing", docket="r001", **{"from": "claude", "act": "answer",
+                                "title": "Over to you", "assignee": "codex",
+                                "body": "b"})
+check("T23", "a handoff routes to the new assignee, not the requester",
+      route(st_, "r001-h") == ("codex", "codex"), str(route(st_, "r001-h")))
+
+# ...and keeps routing there. The first attempt at this fix only looked at the
+# last filing, so any later filing sent it back to the requester again.
+dn2("filing", docket="r001", **{"from": "claude", "act": "answer",
+                                "title": "One more thing", "body": "b"})
+check("T23", "a later filing does not undo the handoff",
+      route(st_, "r001-h") == ("codex", "codex"), str(route(st_, "r001-h")))
+
+dn2("filing", docket="r001", **{"from": "codex", "act": "answer",
+                                "title": "Analysed", "body": "b"})
+check("T23", "once the new assignee answers, the requester owes the close",
+      route(st_, "r001-h") == ("codex", "qwen"), str(route(st_, "r001-h")))
+
+# A party claiming an unclaimed docket owes the work from that moment.
+dn2("request", **{"from": "qwen", "slug": "u", "title": "U", "act": "question",
+                  "body": "b"})
+check("T23", "an unclaimed docket still names nobody",
+      route(st_, "r002-u") == (None, None), str(route(st_, "r002-u")))
+dn2("filing", docket="r002", **{"from": "codex", "act": "ack",
+                                "title": "Mine", "assignee": "codex", "body": "b"})
+check("T23", "claiming an unclaimed docket routes to the claimer",
+      route(st_, "r002-u") == ("codex", "codex"), str(route(st_, "r002-u")))
+
+# Relinquishing must return it to unclaimed, not name the party that left.
+dn2("filing", docket="r002", **{"from": "codex", "act": "answer",
+                                "title": "Not mine after all", "assignee": "none",
+                                "body": "b"})
+check("T23", "relinquishing does not leave the docket routed to the leaver",
+      route(st_, "r002-u") == (None, "qwen"), str(route(st_, "r002-u")))
+shutil.rmtree(d)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0

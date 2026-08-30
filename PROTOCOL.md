@@ -493,7 +493,17 @@ requester is run again — that is a scheduling gap, not a protocol defect, and 
 is where dockets go to die in practice.
 
 Implementations MUST therefore derive **`waiting_on`** for every open docket: the
-assignee when the requester filed last, otherwise the requester. `INDEX.md`
+**assignee**, unless the assignee has filed since it was assigned *and* since the
+requester last filed — in which case the **requester**, who owes a close or an
+objection. An unclaimed docket names **nobody** when the requester filed last;
+that is not a gap to be filled but the signal that someone must claim it (§4).
+
+The obvious rule — *the assignee when the requester filed last, otherwise the
+requester* — is complete for two parties and has no third case. A handoff names a
+new assignee and then points the scheduler at the requester, who owes nothing;
+worse, no filing by a non-requester can recover it, so only the requester can
+route work onward. With three parties that made the weakest one responsible for
+routing between the two strongest (r014). `INDEX.md`
 SHOULD group open dockets by it. Whoever schedules parties — a human or a
 supervisor — then has a machine-readable answer to "who do I run next", which is
 the most a pull-only protocol can offer and is enough to keep dockets closing.

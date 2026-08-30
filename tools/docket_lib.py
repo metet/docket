@@ -201,13 +201,16 @@ def reduce_docket(filings, invalid=frozenset(), known=frozenset()):
     any authority violations. Invalid filings never change derived state."""
     st = dict(requester=None, status="open", assignee=None, blocked_on=None,
               violations=[], count=len(filings))
+    assigned_by = None          # filename of the last filing to name an assignee
     for f in filings:
         if f["fn"] in invalid: continue
         fm, who = f["fm"], f["fm"].get("from")
         if f["num"] == "000":
             st["requester"] = who
             st["status"]    = fm.get("status", "open")
-            if fm.get("assignee"): st["assignee"] = fm["assignee"]
+            if fm.get("assignee"):
+                st["assignee"] = fm["assignee"]
+                assigned_by = f["fn"]
             continue
         if "assignee" in fm:
             if fm["assignee"] in ("", "none", "None"):
@@ -219,6 +222,7 @@ def reduce_docket(filings, invalid=frozenset(), known=frozenset()):
                                   and fm["assignee"] == who)
             if who in (st["requester"], st["assignee"]) or claiming_unclaimed:
                 st["assignee"] = fm["assignee"]
+                assigned_by = f["fn"]     # for waiting_on, below
             else:
                 st["violations"].append(
                     f"{f['fn']}: {who} may not set assignee "
@@ -255,12 +259,34 @@ def reduce_docket(filings, invalid=frozenset(), known=frozenset()):
         # Registry membership rather than a syntax prefix, because a prefix is
         # another rule the weakest party has to remember (r002).
         st["waiting_on"] = st["blocked_on"] if st["blocked_on"] in known else None
-    else:
-        # Pull-only: nothing wakes a party, so name whose turn it is. If the last
-        # word was the requester's, the assignee owes work; otherwise the
-        # requester owes a close or an objection.
+    elif not st["assignee"]:
+        # Unclaimed. Naming nobody is the point: r008 gives these their own
+        # section, because with three parties every party assuming another has
+        # it is the dominant failure mode (PROTOCOL 4). Unchanged by r014.
         last = valid[-1]["fm"].get("from")
-        st["waiting_on"] = st["assignee"] if last == st["requester"] else st["requester"]
+        st["waiting_on"] = None if last == st["requester"] else st["requester"]
+    else:
+        # Pull-only: nothing wakes a party, so name whose turn it is. The
+        # assignee owes work unless it has already spoken since it was assigned
+        # AND since the requester last spoke; otherwise the requester owes a
+        # close or an objection.
+        #
+        # Keying on "was the last filer the requester" instead (the rule until
+        # r014) is complete for two parties and has no third case. A handoff
+        # named a new assignee and then pointed the scheduler at the requester,
+        # who owed nothing, and no filing by a non-requester could recover it --
+        # so only the requester could route work onward. With three parties that
+        # made the weakest one responsible for routing between the two strongest.
+        def last_from(party):
+            return max((i for i, f in enumerate(valid)
+                        if f["fm"].get("from") == party), default=-1)
+        at = {f["fn"]: i for i, f in enumerate(valid)}
+        since = max(at.get(assigned_by, -1), last_from(st["requester"]))
+        # <= not <: a party claiming an unclaimed docket files AT the moment it
+        # takes the work, and that filing cannot also be the one discharging it.
+        st["waiting_on"] = (st["assignee"]
+                            if last_from(st["assignee"]) <= since
+                            else st["requester"])
     return st
 
 
