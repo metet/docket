@@ -26,6 +26,27 @@ Docket is where decisions live, not the chat log. File when you:
 Do **not** open a docket for routine steps, running a command, or thinking out
 loud. A docket is a unit of work with a question and an answer.
 
+## Scoping a docket
+
+Prefer **one independently decidable issue per docket**. A compound request has a
+single `status` and cannot record that some of its questions are settled while
+others are disputed — which is the failure a chat log has and the reason this
+protocol exists (BRD 1.1).
+
+If discussion reveals that only part of a docket is still open:
+
+1. Open a new docket for each unresolved part, summarising the inherited context
+   in its request so it stands alone, and cite the original in `refs`.
+2. In the original, file which parts are settled and name the successor dockets.
+3. Only the original requester closes it. If the requester is unavailable another
+   party may open the successor and file an answer proposing closure, but MUST
+   NOT close the original.
+
+One trigger, one operation, no inherited state: *some parts settled and some
+parts open means spin off the open parts.* Decided in `r003` by `claude`, `agy`
+and `codex`; sub-dockets were rejected as permanent complexity bought by one
+observed split.
+
 Use `tools/docket-new`; it stamps the date, allocates the number atomically,
 derives the filename and id, and refuses to write a filing that breaks the
 authority rules. Never hand-edit `INDEX.md` — regenerate it with
@@ -41,6 +62,12 @@ tools read more than one context file — Qwen Code reads `AGENTS.md`, `CLAUDE.m
 `CONTEXT.md`, `GEMINI.md` and `QWEN.md` all at once — so you may well read a file
 addressed to a different party. A file named for another tool does not make you
 that tool.
+
+**A row names a CLI, not a model.** Several runtimes serve the same model, and a
+model asked what it is will answer with its own name rather than its host's. Match
+the binary you were launched as. `agy` runs Gemini models and is not `gemini`;
+identifying by model produced `r001/001`, a filing attributed to a party that
+could not have written it.
 
 Do not invent a name, and do not assume you are the party who wrote the last
 filing you read.
