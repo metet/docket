@@ -125,6 +125,18 @@ TOOLS = [
    "annotations": A("Read the Docket protocol", read_only=True)},
 ]
 
+def missing_required(name, args):
+    """Required arguments absent from a call, per the tool's own schema.
+
+    Without this the first thing to touch a missing field raised, and the model
+    got "KeyError: 'title'" — the right shape for MCP, but it names a Python
+    dict lookup rather than the argument it forgot.
+    """
+    spec = next((t for t in TOOLS if t["name"] == name), None)
+    if not spec:
+        return []
+    return [k for k in spec["inputSchema"].get("required", []) if not args.get(k)]
+
 def run_new(kind, args):
     from docket_lib import quote_flow
     """Every write goes through docket-new: one implementation, no drift.
@@ -159,6 +171,10 @@ def run_new(kind, args):
 
 def call(name, args):
     from docket_lib import dockets, validate_docket, load, read, apply_errata
+    miss = missing_required(name, args)
+    if miss:
+        return text(f"{name}: missing required argument"
+                    f"{'s' if len(miss) > 1 else ''}: {', '.join(miss)}", True)
     if name == "docket_list":
         rows, mine = [], []
         for d in dockets(STORE):
