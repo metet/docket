@@ -172,13 +172,27 @@ def main():
             elif method == "tools/list":
                 ok(mid, {"tools": TOOLS})
             elif method == "tools/call":
-                ok(mid, call(m["params"]["name"], m["params"].get("arguments") or {}))
+                params = m.get("params") or {}
+                name = params.get("name")
+                if not isinstance(name, str) or not name:
+                    err(mid, -32602, "invalid params: tools/call requires a tool name")
+                else:
+                    ok(mid, call(name, params.get("arguments") or {}))
             elif mid is not None:
                 err(mid, -32601, f"method not found: {method}")
         except Exception as e:                       # never die on one bad call
             log(f"error in {method}: {e}")
-            if mid is not None:
+            if mid is None:
+                continue
+            # A tool that fails is reported in band, as an isError result the
+            # model can read and act on. Anything else must answer with a
+            # JSON-RPC error: a client awaiting InitializeResult or
+            # ListToolsResult fails schema validation on a CallToolResult and
+            # drops the connection rather than surfacing the problem.
+            if method == "tools/call":
                 ok(mid, text(f"{type(e).__name__}: {e}", True))
+            else:
+                err(mid, -32603, f"internal error: {type(e).__name__}: {e}")
 
 if __name__ == "__main__":
     main()
