@@ -356,8 +356,12 @@ The refs on r004/001-qwen pointed at line 14; the correct line is 41.
   an `act: objection`, not an erratum.
 - If the erratum also carries a corrected field, that value replaces the original.
   Otherwise the field is simply dropped, and the erratum's body says what is true.
-- Correctable: `refs`, `evidence`, `to`, `blocked_on`, `act`, `parent`, `date`.
+- Correctable: `refs`, `evidence`, `to`, `blocked_on`, `parent`, `date`.
   `date` is retract-only, since the erratum carries its own.
+- **`act` is not correctable.** A correction supplies the replacement value as
+  the erratum's own field, and an erratum's `act` is necessarily `erratum`, so
+  correcting `act` could only ever write `erratum`. Correct a mislabelled act by
+  filing again with the right one and an `act: report` recording the mistake.
 - **Not correctable: `protocol`, `id`, `docket`, `from`, `type`.** Changing those
   is forgery, not correction. Nor `status` or `assignee` — state has its own
   authorised transitions (§3), and a correction must not become a back door to them.

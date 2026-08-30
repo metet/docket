@@ -9,8 +9,20 @@ TYPES     = {"request", "filing", "disposition"}
 ACTS      = {"question","task","review","report","answer","objection","ack","erratum"}
 # An erratum may correct the record, never identity or state. Identity fields
 # would be forgery; status/assignee already have authorised ways to change.
-CORRECTABLE = {"refs","evidence","to","blocked_on","act","parent","date"}
+#
+# `act` is deliberately absent. An erratum supplies a replacement as its own
+# field, and an erratum's own `act` is necessarily "erratum" -- docket-new
+# requires --act erratum before it will accept --corrects at all. So correcting
+# `act` could only ever write "erratum". Listing it let a well-formed erratum
+# silently falsify the filing it corrected, and left that filing failing
+# validation for fields it was never going to have (r003/003). A mislabelled act
+# is corrected by filing again with the right one, not by erratum.
+CORRECTABLE = {"refs","evidence","to","blocked_on","parent","date"}
 RETRACT_ONLY = {"date"}   # every filing has its own date; it cannot be replaced
+# Naming one of these in `corrects` is an attempt to forge identity or to reach
+# state without its authorised transition, so it invalidates the filing. Naming
+# any other non-correctable field is merely ineffective, and warns.
+PROTECTED = {"protocol", "id", "docket", "from", "type", "status", "assignee"}
 STATUSES  = {"open","blocked","resolved","withdrawn"}
 TERMINAL  = {"resolved","withdrawn"}
 
@@ -294,9 +306,23 @@ def validate_docket(store, dirname, known=None):
             if not fields:
                 errs.append("act: erratum requires corrects: [<field>, ...]")
             for fld in fields:
-                if fld not in CORRECTABLE:
-                    errs.append(f"{fld!r} is not correctable by erratum "
-                                f"(allowed: {sorted(CORRECTABLE)})")
+                if fld in CORRECTABLE:
+                    continue
+                if fld in PROTECTED:
+                    # Identity is forgery; state has authorised transitions of
+                    # its own. Either is an attempt to route around a rule, so
+                    # the filing is invalid and excluded from reduction.
+                    errs.append(f"{fld!r} may not be corrected by erratum — "
+                                "identity and state change only through their own "
+                                "authorised paths")
+                else:
+                    # Merely uncorrectable, e.g. `act`, or a misspelled field.
+                    # apply_errata skips it, so the record is unharmed. An error
+                    # here would be permanent: the filing is immutable, so the
+                    # store could never be clean again. docket-new refuses to
+                    # write this, so conforming tooling cannot produce a new one.
+                    warnings.append(f"{w}: {fld!r} is not correctable and was "
+                                    f"ignored (allowed: {sorted(CORRECTABLE)})")
         def bad(m): errs.append(m)
         if f.get("err"): bad(f["err"])
         elif not fm:     bad("no YAML front matter")

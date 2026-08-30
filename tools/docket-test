@@ -168,6 +168,36 @@ check("T9", "writers are non-idempotent", not bad, f"wrong: {bad}")
 bad = [n for n in tools if tools[n].get("annotations", {}).get("openWorldHint") is not False]
 check("T9", "all tools are closed-world", not bad, f"wrong: {bad}")
 
+# ---- T12: act is not correctable, and saying so must not poison the store ----
+d = fresh()
+new_ = lambda *a, **k: subprocess.run(["python3", os.path.join(D,"tools","docket-new"), *a],
+                                      input="b", capture_output=True, text=True, cwd=d)
+new_("request", "--store","docket","--from","claude","--slug","q","--title","Q","--act","question")
+new_("filing","--store","docket","--docket","r001","--from","qwen","--act","answer",
+     "--title","A","--evidence","git:aaa")
+p_ = new_("filing","--store","docket","--docket","r001","--from","qwen","--act","erratum",
+          "--title","E","--supersedes","r001/001-qwen","--corrects","act")
+check("T12", "docket-new refuses --corrects act", p_.returncode != 0, p_.stderr.strip()[:80])
+p_ = new_("filing","--store","docket","--docket","r001","--from","qwen","--act","erratum",
+          "--title","E","--supersedes","r001/001-qwen","--corrects","from")
+check("T12", "docket-new refuses a protected field", p_.returncode != 0, p_.stderr.strip()[:80])
+
+# a hand-written erratum naming act: ignored, warned about, never an error
+open(os.path.join(d,"docket","r001-q","002-qwen-erratum.md"),"w").write(
+    "---\nprotocol: docket/0.2\nid: r001/002-qwen\ndocket: r001\n"
+    "parent: r001/001-qwen\nfrom: qwen\ntype: filing\nact: erratum\n"
+    "supersedes: r001/001-qwen\ncorrects: [act]\ndate: 2026-08-29T10:00:00Z\n---\n\n# E\n")
+lint = subprocess.run(["python3", os.path.join(D,"tools","docket-lint"), "docket"],
+                      capture_output=True, text=True, cwd=d)
+check("T12", "an act erratum warns, never errors", lint.returncode == 0,
+      lint.stdout.strip().splitlines()[-1])
+sys.path.insert(0, os.path.join(D, "tools"))
+import importlib, docket_lib; importlib.reload(docket_lib)
+acts = {f["fm"].get("id"): f["fm"].get("act")
+        for f in docket_lib.apply_errata(docket_lib.load(os.path.join(d,"docket","r001-q")))}
+check("T12", "the target keeps its own act", acts.get("r001/001-qwen") == "answer", str(acts))
+shutil.rmtree(d)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0
