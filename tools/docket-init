@@ -87,14 +87,32 @@ def main():
     os.makedirs(os.path.join(store, ".seq"), exist_ok=True)
     made.append(f"{a.store}/.seq/")
 
+    # Both modes put the protocol and registry *in the store*: everything that
+    # reads them (docket_lib.parties, docket-mcp, the AGENTS.md block) looks in
+    # store/ first. A linked store that had neither could not resolve a party
+    # name at all, so from:/to:/assignee went silently unchecked.
+    for name in ("PROTOCOL.md", "PARTIES.md"):
+        dst = os.path.join(store, name)
+        if (os.path.exists(dst) or os.path.islink(dst)) and not a.force:
+            made.append(f"{a.store}/{name} (exists, kept)")
+            continue
+        if os.path.islink(dst) or os.path.exists(dst):
+            os.remove(dst)
+        src = os.path.join(SOURCE, name)
+        if not a.link:
+            shutil.copy2(src, dst)
+            made.append(f"{a.store}/{name}")
+            continue
+        try:
+            # Absolute, like the README path below: the two repos are unrelated
+            # trees, so a relative link is wrong the moment either one moves.
+            os.symlink(src, dst)
+            made.append(f"{a.store}/{name} -> {src}")
+        except OSError as e:
+            shutil.copy2(src, dst)
+            made.append(f"{a.store}/{name} (copied, symlink failed: {e.strerror})")
+
     if not a.link:
-        for name in ("PROTOCOL.md", "PARTIES.md"):
-            dst = os.path.join(store, name)
-            if os.path.exists(dst) and not a.force:
-                made.append(f"{a.store}/{name} (exists, kept)")
-            else:
-                shutil.copy2(os.path.join(SOURCE, name), dst)
-                made.append(f"{a.store}/{name}")
         tdst = os.path.join(target, "tools")
         os.makedirs(tdst, exist_ok=True)
         for t in ("docket_lib.py", "docket-new", "docket-lint", "docket-index"):
@@ -111,8 +129,8 @@ def main():
     if not os.path.exists(readme) or a.force:
         # Linked stores use an absolute path: a relative one across unrelated
         # trees is both unreadable and wrong the moment either repo moves.
-        loc = (f"- Protocol: `{SOURCE}/PROTOCOL.md`\n"
-               f"- Parties:  `{SOURCE}/PARTIES.md`\n"
+        loc = (f"- Protocol: [`PROTOCOL.md`](PROTOCOL.md) -> `{SOURCE}/PROTOCOL.md`\n"
+               f"- Parties:  [`PARTIES.md`](PARTIES.md) -> `{SOURCE}/PARTIES.md`\n"
                f"- Tools:    `{SOURCE}/tools/`"
                if a.link else
                "- Protocol: [`PROTOCOL.md`](PROTOCOL.md)\n- Parties:  [`PARTIES.md`](PARTIES.md)")
