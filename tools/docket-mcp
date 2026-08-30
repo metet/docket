@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Docket over MCP — stdio JSON-RPC 2.0, no dependencies.
+
+Exposes docket verbs, not messaging verbs: every exchange belongs to a request
+with a lifecycle and a terminal state.
+
+Writes shell out to `docket-new` rather than reimplementing anything, so the
+MCP path and the CLI path cannot drift apart. Reads use docket_lib, the same
+model docket-lint and docket-index use.
+
+Identity comes from DOCKET_PARTY, set once when the server is registered. There
+is no `from` argument on any tool, so a model cannot claim to be another party.
+
+Registration:
+  qwen   mcp add docket python3 /path/to/tools/docket-mcp -e DOCKET_PARTY=qwen   -e DOCKET_STORE=docket --trust
+  claude mcp add docket -e DOCKET_PARTY=claude -e DOCKET_STORE=docket -- python3 /path/to/tools/docket-mcp
+"""
+import sys, os, json, subprocess
+
+HERE     = os.path.dirname(os.path.abspath(__file__))
+NEW      = os.path.join(HERE, "docket-new")
+PARTY    = os.environ.get("DOCKET_PARTY", "")
+STORE    = os.environ.get("DOCKET_STORE", "docket")
+PROTOCOL = "2024-11-05"
+sys.path.insert(0, HERE)
+
+def log(*a):                      # stdout is the protocol channel; never print there
+    print(*a, file=sys.stderr, flush=True)
+
+def send(msg):
+    sys.stdout.write(json.dumps(msg) + "\n"); sys.stdout.flush()
+
+def ok(i, result):  send({"jsonrpc": "2.0", "id": i, "result": result})
+def err(i, code, m): send({"jsonrpc": "2.0", "id": i, "error": {"code": code, "message": m}})
+def text(s, is_error=False):
+    return {"content": [{"type": "text", "text": s}], "isError": is_error}
+
+S = lambda d="": {"type": "string", **({"description": d} if d else {})}
+
+TOOLS = [
+  {"name": "docket_list",
+   "description": "List open dockets: status, assignee, and which party each is waiting on. "
+                  "Call this first in a session — anything waiting on you is yours to advance.",
+   "inputSchema": {"type": "object", "properties": {}, "required": []}},
+  {"name": "docket_read",
+   "description": "Read every filing in one docket, in canonical order.",
+   "inputSchema": {"type": "object",
+                   "properties": {"docket": S("docket id, e.g. r004")},
+                   "required": ["docket"]}},
+  {"name": "docket_open",
+   "description": "Open a new docket: a question, task, review or report that needs an answer. "
+                  "Use for anything whose outcome should be findable later.",
+   "inputSchema": {"type": "object", "properties": {
+       "slug":     S("short-kebab-name, e.g. grid-spacing"),
+       "title":    S("one line stating the question or task"),
+       "body":     S("the full request, in Markdown"),
+       "act":      {"type": "string", "enum": ["question","task","review","report"]},
+       "to":       S("comma-separated party names"),
+       "assignee": S("party responsible for advancing it")},
+    "required": ["slug", "title", "body"]}},
+  {"name": "docket_file",
+   "description": "Add a filing to an existing docket — an answer, an objection, an "
+                  "acknowledgement, or a correction. Does not close it.",
+   "inputSchema": {"type": "object", "properties": {
+       "docket":   S("docket id, e.g. r004"),
+       "title":    S("one line summarising this filing"),
+       "body":     S("the filing, in Markdown"),
+       "act":      {"type": "string", "enum": ["answer","objection","ack","review","report","erratum"]},
+       "parent":   S("filing id this responds to, e.g. r004/000"),
+       "refs":     S("comma-separated path:line references"),
+       "evidence": S("comma-separated proof: commit sha, command output, a file"),
+       "status":   {"type": "string", "enum": ["open","blocked"]},
+       "blocked_on": S("party or condition being waited on")},
+    "required": ["docket", "title", "body"]}},
+  {"name": "docket_close",
+   "description": "Close a docket you opened. Only the requester may close; if you are not, "
+                  "file an answer proposing closure instead. Attach evidence pointing outward.",
+   "inputSchema": {"type": "object", "properties": {
+       "docket":   S("docket id, e.g. r004"),
+       "title":    S("one line stating the outcome"),
+       "body":     S("what was decided and why"),
+       "evidence": S("comma-separated proof: commit sha, command output, a file outside the store"),
+       "status":   {"type": "string", "enum": ["resolved", "withdrawn"]}},
+    "required": ["docket", "title", "body"]}},
+  {"name": "docket_protocol",
+   "description": "Return the Docket protocol's quick start: how to file, who may close, "
+                  "and the rules most often broken. Read this before your first filing.",
+   "inputSchema": {"type": "object", "properties": {}, "required": []}},
+]
+
+def run_new(kind, args):
+    """Every write goes through docket-new: one implementation, no drift.
+    argv is built as a list, so no argument can inject a flag."""
+    if not PARTY:
+        return text("DOCKET_PARTY is not set, so this server has no identity. "
+                    "Re-register it with -e DOCKET_PARTY=<your party name>.", True)
+    argv = ["python3", NEW, kind, "--store", STORE, "--from", PARTY,
+            "--title", args["title"]]
+    for flag, key in (("--slug","slug"), ("--docket","docket"), ("--act","act"),
+                      ("--to","to"), ("--assignee","assignee"), ("--parent","parent"),
+                      ("--refs","refs"), ("--evidence","evidence"),
+                      ("--status","status"), ("--blocked-on","blocked_on")):
+        if args.get(key):
+            argv += [flag, str(args[key])]
+    p = subprocess.run(argv, input=args.get("body", ""), capture_output=True, text=True)
+    if p.returncode != 0:
+        return text((p.stderr or p.stdout).strip() or "docket-new failed", True)
+    path = p.stdout.strip()
+    subprocess.run(["python3", os.path.join(HERE, "docket-index"), STORE],
+                   capture_output=True, text=True)
+    return text(f"filed {path}")
+
+def call(name, args):
+    from docket_lib import dockets, validate_docket, load, read
+    if name == "docket_list":
+        rows = []
+        for d in dockets(STORE):
+            _, _, _, _, st = validate_docket(STORE, d)
+            if st["status"] in ("resolved", "withdrawn"):
+                continue
+            rows.append(f"{d}  status={st['status']}  assignee={st['assignee'] or '-'}  "
+                        f"waiting_on={st.get('waiting_on') or '-'}")
+        mine = [r for r in rows if f"waiting_on={PARTY}" in r]
+        out = "\n".join(rows) or "No open dockets."
+        if mine:
+            out += f"\n\n{len(mine)} waiting on you ({PARTY}):\n" + "\n".join("  " + m for m in mine)
+        return text(out)
+    if name == "docket_read":
+        did = args["docket"].split("-")[0]
+        for d in dockets(STORE):
+            if d.split("-")[0] == did:
+                return text("\n\n".join(f"=== {f['fn']} ===\n{f['text']}"
+                                        for f in load(os.path.join(STORE, d))))
+        return text(f"no docket {did} in {STORE}/", True)
+    if name == "docket_protocol":
+        for cand in (os.path.join(STORE, "PROTOCOL.md"), os.path.join(HERE, "..", "PROTOCOL.md")):
+            if os.path.exists(cand):
+                t = read(cand)
+                i = t.find("## 1.")
+                return text(t[:i] if i > 0 else t[:6000])
+        return text("PROTOCOL.md not found", True)
+    if name in ("docket_open", "docket_file", "docket_close"):
+        return run_new({"docket_open": "request", "docket_file": "filing",
+                        "docket_close": "close"}[name], args)
+    return text(f"unknown tool {name}", True)
+
+def main():
+    log(f"docket-mcp: party={PARTY or '(unset)'} store={STORE}")
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        try:
+            m = json.loads(line)
+        except json.JSONDecodeError as e:
+            err(None, -32700, f"parse error: {e}"); continue
+        method, mid = m.get("method"), m.get("id")
+        try:
+            if method == "initialize":
+                ok(mid, {"protocolVersion": PROTOCOL, "capabilities": {"tools": {}},
+                         "serverInfo": {"name": "docket", "version": "0.2"}})
+            elif method in ("notifications/initialized", "notifications/cancelled"):
+                pass
+            elif method == "ping":
+                ok(mid, {})
+            elif method == "tools/list":
+                ok(mid, {"tools": TOOLS})
+            elif method == "tools/call":
+                ok(mid, call(m["params"]["name"], m["params"].get("arguments") or {}))
+            elif mid is not None:
+                err(mid, -32601, f"method not found: {method}")
+        except Exception as e:                       # never die on one bad call
+            log(f"error in {method}: {e}")
+            if mid is not None:
+                ok(mid, text(f"{type(e).__name__}: {e}", True))
+
+if __name__ == "__main__":
+    main()

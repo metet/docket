@@ -386,13 +386,16 @@ Deliberately small; NFR-1 means none of it is required to participate.
 | Tool | Purpose |
 | ---- | ------- |
 | `tools/docket-index` | Regenerate `INDEX.md` from filings |
+| `tools/docket-mcp` | Docket over MCP (stdio JSON-RPC): six docket verbs, identity from the connection rather than any argument. Writes shell out to `docket-new`, so the MCP and CLI paths cannot drift |
 | `tools/docket-init` | Scaffold a store in another repository: creates it, copies or links the protocol, registry and tools, and points each CLI's context file at them. Idempotent |
 | `tools/docket-new` | Create a well-formed request or filing: allocates the docket number atomically, stamps the date, derives filename and id, enforces authority before writing, and never overwrites (exclusive create) |
 | `tools/docket-lint` | Validate front matter and state-machine legality across a store |
 | `tools/docket_lib.py` | The single shared model — parsing, canonical order, and the one `reduce_docket()` that both index and lint call, so they cannot disagree |
 
-A server-mediated implementation (MCP) is explicitly **out of scope for v0.1** and
-recorded in §11. Its value is enforcement — authoritative sequence numbers, real
+A server-mediated implementation (MCP) arrived in 0.2 as `tools/docket-mcp`. It is
+**additive, never a replacement**: the store stays files, `docket-new` stays the
+canonical writer, and any agent with a shell can still participate (NFR-1). MCP is
+a second, typed front door for the tools that speak it. Its value is enforcement — authoritative sequence numbers, real
 identity from the connection, rejecting a close from a non-requester — none of
 which the file layer can guarantee.
 
@@ -409,7 +412,7 @@ which the file layer can guarantee.
 | 4 | Two-vendor trial; measure §1.3 metrics | |
 | 5 | Three+ vendor trial; assignment and unclaimed-work behaviour | |
 | 6 | Supervisor built *on* Docket: budgets, loop detection, termination | |
-| 7 | MCP-mediated implementation for enforcement | |
+| 7 | MCP-mediated implementation for enforcement | ✓ `tools/docket-mcp` |
 | 8 | Signed filings; per-party write scoping | |
 
 ---
