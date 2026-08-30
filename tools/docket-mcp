@@ -113,14 +113,20 @@ def run_new(kind, args):
 def call(name, args):
     from docket_lib import dockets, validate_docket, load, read
     if name == "docket_list":
-        rows = []
+        rows, mine = [], []
         for d in dockets(STORE):
             _, _, _, _, st = validate_docket(STORE, d)
             if st["status"] in ("resolved", "withdrawn"):
                 continue
-            rows.append(f"{d}  status={st['status']}  assignee={st['assignee'] or '-'}  "
-                        f"waiting_on={st.get('waiting_on') or '-'}")
-        mine = [r for r in rows if f"waiting_on={PARTY}" in r]
+            row = (f"{d}  status={st['status']}  assignee={st['assignee'] or '-'}  "
+                   f"waiting_on={st.get('waiting_on') or '-'}")
+            rows.append(row)
+            # Compare the reduced state, not the rendered row. Substring matching
+            # on "waiting_on=" claimed every open docket for an unset party, and
+            # let a party whose name is a prefix of another ("qwe" against
+            # "qwen") claim that party's work.
+            if PARTY and st.get("waiting_on") == PARTY:
+                mine.append(row)
         out = "\n".join(rows) or "No open dockets."
         if mine:
             out += f"\n\n{len(mine)} waiting on you ({PARTY}):\n" + "\n".join("  " + m for m in mine)
