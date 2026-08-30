@@ -67,6 +67,9 @@ TOOLS = [
        "body":     S("the filing, in Markdown"),
        "act":      {"type": "string", "enum": ["answer","objection","ack","review","report","erratum"]},
        "parent":   S("filing id this responds to, e.g. r004/000"),
+       "to":       S("comma-separated party names"),
+       "assignee": S("party responsible for advancing it; claim an unclaimed "
+                     "docket by filing act: ack with yourself as assignee"),
        "refs":     S("comma-separated path:line references"),
        "evidence": S("comma-separated proof: commit sha, command output, a file"),
        "status":   {"type": "string", "enum": ["open","blocked"]},
