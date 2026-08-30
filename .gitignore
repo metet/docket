@@ -4,3 +4,6 @@
 # python bytecode
 __pycache__/
 *.pyc
+
+# local editor state — the store is meant to be read in whatever you like
+.obsidian/
