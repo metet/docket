@@ -654,13 +654,14 @@ check("T22", "the party is recorded in a trailer",
       show(d, "%(trailers:key=Docket-Party,valueonly)").strip() == "claude",
       show(d, "%(trailers:key=Docket-Party,valueonly)"))
 
-# Committing someone else's filing under your own name: §5b says a party commits
-# only what it created, and this is that rule seen from the attribution side.
+# Publishing someone else's filing is allowed, but §5b requires the commit to
+# preserve that filing's author rather than name the operator.
 stage(d, dk + "/002-agy-answer.md")
 r = commit(d, "claude", "sweeping up")
-check("T22", "committing another party's filing is refused", r.returncode == 1,
+check("T22", "attributing another party's filing to the operator is refused",
+      r.returncode == 1,
       r.stderr.strip().splitlines()[-1][:120] if r.stderr.strip() else "")
-check("T22", "the refusal names the party it should have been",
+check("T22", "the refusal names the filing author",
       "agy" in r.stderr, r.stderr[:120])
 
 # A refused commit leaves its files staged, so clear the index before the next
@@ -743,7 +744,21 @@ check("T22", "splitting the same work by author lets both commits through",
       r_a.returncode == 0 and r_c.returncode == 0,
       f"agy={r_a.returncode} claude={r_c.returncode}")
 
-# 4. An unreadable request must not invent a mismatch: no parseable front matter
+# 4. Quoted scalars are valid front matter, so request attribution must not
+#    disappear merely because a conforming writer chose to quote `from`.
+reset(d)
+newf(d, kind="request", **{"from": "agy", "slug": "quoted", "title": "Quoted",
+                           "act": "task", "body": "b"})
+dq = "docket/r003-quoted"
+qpath = os.path.join(d, dq, "000-request.md")
+qtext = open(qpath, encoding="utf-8").read()
+open(qpath, "w", encoding="utf-8").write(qtext.replace("from: agy", 'from: "agy"'))
+stage(d, "docket/.seq", dq + "/000-request.md")
+r = commit(d, "claude", "wrong author for a quoted request")
+check("T22", "a quoted request author is still enforced",
+      r.returncode == 1 and "agy" in r.stderr, r.stderr[:140])
+
+# 5. An unreadable request must not invent a mismatch: no parseable front matter
 #    means no author, which is the pre-r032 behaviour of contributing nothing.
 #    This hook blocks only on disagreement, never on absence.
 #
@@ -757,9 +772,9 @@ _cmsg = _iu2.module_from_spec(_hspec)
 _hspec.loader.exec_module(_cmsg)          # name is not __main__, so main() stays put
 
 reset(d)
-os.makedirs(os.path.join(d, "docket", "r003-broken"), exist_ok=True)
-open(os.path.join(d, "docket", "r003-broken", "000-request.md"), "w").write("no front matter\n")
-stage(d, "docket/r003-broken/000-request.md")
+os.makedirs(os.path.join(d, "docket", "r004-broken"), exist_ok=True)
+open(os.path.join(d, "docket", "r004-broken", "000-request.md"), "w").write("no front matter\n")
+stage(d, "docket/r004-broken/000-request.md")
 # request_author shells out to git in the process cwd, and this suite runs from
 # the pre-commit hook with GIT_DIR and GIT_INDEX_FILE exported. Left in place
 # they would point the read back at the real repository -- the same escape T14
@@ -768,7 +783,7 @@ _cwd = os.getcwd()
 _saved = {k: os.environ.pop(k) for k in list(os.environ) if k.startswith("GIT_")}
 try:
     os.chdir(d)
-    _author = _cmsg.request_author("docket/r003-broken/000-request.md")
+    _author = _cmsg.request_author("docket/r004-broken/000-request.md")
 finally:
     os.chdir(_cwd)
     os.environ.update(_saved)

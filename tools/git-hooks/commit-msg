@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Refuse a commit whose declared party contradicts the filings it carries.
 
-Attribution in the store is strong -- a filing's path names its author (§1) --
-and attribution in git is not: every party runs as the same OS user, from the
-same clone, pushing the same key, so nothing here authenticates anyone. This
-hook does not try to. It checks the two records against each other and blocks
-the case where they disagree, which is the mistake an honest party makes.
+Attribution inside the store comes from two places: a request carries its author
+in the immutable `from` field, while every later filing names its author in its
+path (§1). Attribution in git is not strong: every party runs as the same OS
+user, from the same clone, pushing the same key, so nothing here authenticates
+anyone. This hook does not try to. It checks the two records against each other
+and blocks the case where they disagree, which is the mistake an honest party
+makes.
 
 The mistake it exists for: `git config user.name agy` sets the identity for the
 whole clone, so the NEXT party's commit is authored `agy` too. That produces
@@ -13,8 +15,9 @@ confidently wrong attribution, which is worse than no attribution at all,
 because it looks like an answer. `docket-commit` passes identity per invocation
 for this reason, and this hook catches it when something else does not.
 
-It also enforces the standing rule that a party commits only files it created
-(§5b), which is the same comparison seen from the other side.
+It also enforces §5b's attribution rule when one party publishes another's
+completed filing: the commit must preserve the filing author, not name the
+operator who happened to invoke git.
 
 Deliberately NOT enforced:
 
@@ -22,15 +25,18 @@ Deliberately NOT enforced:
   an unconfigured clone. Warned about, never blocked: the human owns the repo
   and does not answer to this hook.
 - A commit staging no filings at all. Tooling changes have no party to check.
-- WHICH BRANCH a commit lands on. A party committing its own filing onto another
-  party's branch passes every check here, correctly -- the filing is its own and
-  the attribution is honest. Concurrent writes to one shared working tree are a
+- WHICH BRANCH a commit lands on. Publishing a filing under its attributed author
+  onto another party's branch passes every check here, correctly -- the
+  attribution is consistent. Concurrent writes to one shared working tree are a
   different problem and want a different fix.
 
 Install with the rest of the hooks:  git config core.hooksPath tools/git-hooks
 Bypass with `git commit --no-verify` when you mean to.
 """
 import os, re, subprocess, sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from docket_lib import front_matter
 
 # <NNN>-<party>-<label>.md per §1. An opening filing is 000-request.md, which
 # names no party in its path -- its author is in the immutable `from` field, so
@@ -40,9 +46,8 @@ import os, re, subprocess, sys
 # carrying one party's request alongside another party's answers could be
 # attributed to the latter and nothing would notice, because the only author the
 # check could see was the one in the filenames.
-FILING  = re.compile(r"^\d+-([a-z0-9]+)-.+\.md$")
-REQUEST = re.compile(r"^\d+-request\.md$")
-FROM    = re.compile(r"^from:\s*([a-z0-9]+)\s*$", re.M)
+FILING = re.compile(r"^\d+-([a-z0-9]+)-.+\.md$")
+REQUEST = "000-request.md"
 
 
 def git(*args):
@@ -62,13 +67,11 @@ def request_author(path):
     evidence of a mismatch, and this hook only ever blocks on disagreement.
     """
     blob = git("show", f":{path}")
-    if not blob.startswith("---"):
+    try:
+        fm = front_matter(blob)
+    except ValueError:
         return None
-    parts = blob.split("---", 2)
-    if len(parts) < 3:
-        return None
-    m = FROM.search(parts[1])
-    return m.group(1) if m else None
+    return fm.get("from") if fm else None
 
 
 def declared_party(msg):
@@ -92,7 +95,7 @@ def staged_parties(store):
         m = FILING.match(base)
         if m:
             found.add(m.group(1))
-        elif REQUEST.match(base):
+        elif base == REQUEST:
             who = request_author(path)
             if who:
                 found.add(who)
@@ -134,11 +137,14 @@ def main():
         sys.stderr.write(
             f"commit-msg: this commit is authored '{who}' but stages filings by "
             + ", ".join(sorted(wrong)) + ".\n"
-              "  A party commits only files it created (PROTOCOL.md 5b), and an\n"
-              "  author that disagrees with the filings is worse than none --\n"
-              "  it reads as an answer. Either commit as the right party:\n"
+              "  PROTOCOL.md 5b requires each commit to preserve its filings'\n"
+              "  author, and an author that disagrees with the filings is worse\n"
+              "  than none --\n"
+              "  it reads as an answer. Split staged filings by author and\n"
+              "  commit each under the matching party, for example:\n"
               f"    tools/docket-commit --from {sorted(wrong)[0]} -m ...\n"
-              "  or unstage what is not yours. Bypass with --no-verify.\n")
+              "  or unstage filings by a different author. Bypass with\n"
+              "  --no-verify.\n")
         return 1
     return 0
 
