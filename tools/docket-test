@@ -1117,6 +1117,34 @@ check("T28", "exactly one filing was written, so no retry duplicates it",
       str(os.listdir(st28)))
 shutil.rmtree(d28)
 
+# ---- T29: docket-init copies git-hooks and docket-commit (r033) ----
+d29 = tempfile.mkdtemp(prefix="dk-init-")
+subprocess.run(["git", "init", d29], capture_output=True, text=True)
+p29 = subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d29],
+                     capture_output=True, text=True)
+hooks_dir = os.path.join(d29, "tools", "git-hooks")
+check("T29", "docket-init creates tools/git-hooks/",
+      os.path.isdir(hooks_dir), f"exists={os.path.exists(hooks_dir)}")
+check("T29", "docket-init installs pre-commit and commit-msg",
+      os.path.isfile(os.path.join(hooks_dir, "pre-commit")) and
+      os.path.isfile(os.path.join(hooks_dir, "commit-msg")),
+      str(os.listdir(hooks_dir) if os.path.exists(hooks_dir) else []))
+check("T29", "docket-init installs docket-commit",
+      os.path.isfile(os.path.join(d29, "tools", "docket-commit")),
+      str(os.listdir(os.path.join(d29, "tools")) if os.path.exists(os.path.join(d29, "tools")) else []))
+subprocess.run(["git", "-C", d29, "config", "core.hooksPath", "tools/git-hooks"],
+               capture_output=True, text=True)
+inv_dir = os.path.join(d29, "docket", "r001-invalid")
+os.makedirs(inv_dir, exist_ok=True)
+with open(os.path.join(inv_dir, "000-request.md"), "w") as f:
+    f.write("---\nprotocol: docket/0.3\nfrom: qwen\ntype: request\n---\n# Missing required fields\n")
+subprocess.run(["git", "-C", d29, "add", "."], capture_output=True, text=True)
+cp_fail = subprocess.run(["git", "-C", d29, "commit", "-m", "test: invalid filing"],
+                         capture_output=True, text=True)
+check("T29", "core.hooksPath blocks invalid filing in downstream repo",
+      cp_fail.returncode != 0, f"exit={cp_fail.returncode} stdout={cp_fail.stdout} stderr={cp_fail.stderr}")
+shutil.rmtree(d29)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0

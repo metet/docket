@@ -133,7 +133,7 @@ def main():
     if not a.link:
         tdst = os.path.join(target, "tools")
         os.makedirs(tdst, exist_ok=True)
-        for t in ("docket_lib.py", "docket-new", "docket-lint", "docket-index"):
+        for t in ("docket_lib.py", "docket-new", "docket-lint", "docket-index", "docket-commit"):
             d = os.path.join(tdst, t)
             if os.path.exists(d) and not a.force:
                 made.append(f"tools/{t} (exists, kept)")
@@ -142,6 +142,17 @@ def main():
             if not t.endswith(".py"):
                 os.chmod(d, 0o755)
             made.append(f"tools/{t}")
+
+        hdst = os.path.join(tdst, "git-hooks")
+        os.makedirs(hdst, exist_ok=True)
+        for h in ("pre-commit", "commit-msg"):
+            hd = os.path.join(hdst, h)
+            if os.path.exists(hd) and not a.force:
+                made.append(f"tools/git-hooks/{h} (exists, kept)")
+                continue
+            shutil.copy2(os.path.join(HERE, "git-hooks", h), hd)
+            os.chmod(hd, 0o755)
+            made.append(f"tools/git-hooks/{h}")
 
     readme = os.path.join(store, "README.md")
     if not os.path.exists(readme) or a.force:
