@@ -31,18 +31,8 @@ def fresh():
     d = tempfile.mkdtemp(prefix="dk-")
     subprocess.run(["python3", os.path.join(D,"tools","docket-init"), d, "--link"],
                    capture_output=True, text=True)
-    # --link symlinks PROTOCOL.md and PARTIES.md back into THIS repository, so a
-    # test that writes one edits the developer's own store. Break the links: a
-    # temp store must be inert. (Found the hard way -- a test wrote PARTIES.md
-    # through the link and truncated the real registry to four lines. Same class
-    # as T14's inherited GIT_DIR and T22's leaked GIT_AUTHOR_NAME: the harness
-    # reaching outside its sandbox.)
-    for name in ("PROTOCOL.md", "PARTIES.md"):
-        q = os.path.join(d, "docket", name)
-        if os.path.islink(q):
-            real = os.path.realpath(q)
-            os.remove(q)
-            shutil.copy2(real, q)
+    # Populate the full test registry in the fixture store
+    shutil.copy2(os.path.join(D, "PARTIES.md"), os.path.join(d, "docket", "PARTIES.md"))
     return d
 
 def check(tid, desc, cond, detail=""):
@@ -938,10 +928,12 @@ c2    = os.path.join(coll, "two", "proj"); os.makedirs(c2)
 for c in (c1, c2):
     subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), c],
                    capture_output=True, text=True)
+    shutil.copy2(os.path.join(D, "PARTIES.md"), os.path.join(c, "docket", "PARTIES.md"))
 bare  = tempfile.mkdtemp(prefix="dk-bare-")       # registered, but has no store
 unreg = tempfile.mkdtemp(prefix="dk-unreg-")      # a real store nobody registered
 subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), unreg],
                capture_output=True, text=True)
+shutil.copy2(os.path.join(D, "PARTIES.md"), os.path.join(unreg, "docket", "PARTIES.md"))
 outside = tempfile.mkdtemp(prefix="dk-outside-")
 ws_cfg  = os.path.join(outside, "workspaces")
 open(ws_cfg, "w").write("\n".join([d_a, d_b, c1, c2, bare]) + "\n")
@@ -1055,6 +1047,7 @@ check("T26", "the server version is not tied to the filing format",
 late = tempfile.mkdtemp(prefix="dk-late-")
 subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), late],
                capture_output=True, text=True)
+shutil.copy2(os.path.join(D, "PARTIES.md"), os.path.join(late, "docket", "PARTIES.md"))
 sub27 = os.path.join(late, "sub"); os.makedirs(sub27)
 cfg27 = os.path.join(late, "workspaces"); open(cfg27, "w").write("")
 env27 = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE="docket",
@@ -1144,6 +1137,49 @@ cp_fail = subprocess.run(["git", "-C", d29, "commit", "-m", "test: invalid filin
 check("T29", "core.hooksPath blocks invalid filing in downstream repo",
       cp_fail.returncode != 0, f"exit={cp_fail.returncode} stdout={cp_fail.stdout} stderr={cp_fail.stderr}")
 shutil.rmtree(d29)
+
+# ---- T30: docket-init provisions minimal local registry (r036) ----
+import docket_lib
+d30_copy = tempfile.mkdtemp(prefix="dk-r36-c-")
+subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d30_copy],
+               capture_output=True, text=True)
+c_parties_path = os.path.join(d30_copy, "docket", "PARTIES.md")
+check("T30", "copy mode creates local PARTIES.md",
+      os.path.isfile(c_parties_path) and not os.path.islink(c_parties_path),
+      f"islink={os.path.islink(c_parties_path)}")
+check("T30", "copy mode leaves initial registry with human only",
+      docket_lib.parties(os.path.join(d30_copy, "docket")) == {"human"},
+      str(docket_lib.parties(os.path.join(d30_copy, "docket"))))
+
+d30_l1 = tempfile.mkdtemp(prefix="dk-r36-l1-")
+d30_l2 = tempfile.mkdtemp(prefix="dk-r36-l2-")
+subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d30_l1, "--link"],
+               capture_output=True, text=True)
+subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d30_l2, "--link"],
+               capture_output=True, text=True)
+l1_proto = os.path.join(d30_l1, "docket", "PROTOCOL.md")
+l1_parties = os.path.join(d30_l1, "docket", "PARTIES.md")
+check("T30", "--link links PROTOCOL.md",
+      os.path.islink(l1_proto), f"islink={os.path.islink(l1_proto)}")
+check("T30", "--link creates local unlinked PARTIES.md",
+      os.path.isfile(l1_parties) and not os.path.islink(l1_parties),
+      f"islink={os.path.islink(l1_parties)}")
+
+with open(l1_parties, "a", encoding="utf-8") as f:
+    f.write("\n| `localbot` | Local Bot | test | small | 0 | Test bot |\n")
+
+check("T30", "editing project 1 registers localbot in project 1",
+      "localbot" in docket_lib.parties(os.path.join(d30_l1, "docket")),
+      str(docket_lib.parties(os.path.join(d30_l1, "docket"))))
+check("T30", "editing project 1 does not leak localbot into project 2",
+      "localbot" not in docket_lib.parties(os.path.join(d30_l2, "docket")),
+      str(docket_lib.parties(os.path.join(d30_l2, "docket"))))
+check("T30", "editing project 1 does not leak localbot into source store",
+      "localbot" not in docket_lib.parties(os.path.join(D, "docket")),
+      str(docket_lib.parties(os.path.join(D, "docket"))))
+
+for p in (d30_copy, d30_l1, d30_l2):
+    shutil.rmtree(p)
 
 # ---- report ----
 w = max(len(r[1]) for r in results)

@@ -22,6 +22,46 @@ def version():
     except Exception:
         return "docket/0.2"
 
+def parties_template():
+    return """# Parties
+
+Participants in this Docket store. Your `from:` field MUST match a **name** below.
+
+This file is the routing input: send judgement, review and root-cause work to
+expensive parties; send bulk implementation to cheap ones.
+
+---
+
+## Registry
+
+| name | runtime | model | context | cost | strengths |
+| --- | --- | --- | --- | --- | --- |
+| `human` | terminal | — | — | — | Authority, tiebreaker, scheduler, anything irreversible |
+
+<!--
+Add rows below for each participant in THIS repository. Match `name` to the
+CLI's DOCKET_PARTY environment variable. Examples:
+
+  | `claude` | Claude Code | Claude Opus 5 | large | $$ | Review, root-cause analysis, architecture |
+  | `codex`  | Codex CLI   | gpt-5.6-sol   | large | $$ | Implementation, refactoring |
+  | `agy`    | Antigravity | Gemini Flash  | large | $  | Fast implementation, multi-tasking |
+  | `qwen`   | Qwen Code   | local model   | small | ~0 | Peripheral implementation, single-file edits |
+-->
+
+## Invocation
+
+| name | command |
+| --- | --- |
+| `human` | — |
+
+<!--
+  | `claude` | `claude -p "<prompt>"` |
+  | `codex`  | `codex exec "<prompt>"` |
+  | `agy`    | `agy -p "<prompt>"` |
+  | `qwen`   | `qwen -p "<prompt>"` |
+-->
+"""
+
 def block(store, linked, source):
     where = f"`{source}`" if linked else "this repository"
     newtool = f"{source}/tools/docket-new" if linked else "tools/docket-new"
@@ -105,30 +145,40 @@ def main():
     os.makedirs(os.path.join(store, ".seq"), exist_ok=True)
     made.append(f"{a.store}/.seq/")
 
-    # Both modes put the protocol and registry *in the store*: everything that
-    # reads them (docket_lib.parties, docket-mcp, the AGENTS.md block) looks in
-    # store/ first. A linked store that had neither could not resolve a party
-    # name at all, so from:/assignee went silently unchecked.
-    for name in ("PROTOCOL.md", "PARTIES.md"):
-        dst = os.path.join(store, name)
-        if (os.path.exists(dst) or os.path.islink(dst)) and not a.force:
-            made.append(f"{a.store}/{name} (exists, kept)")
-            continue
-        if os.path.islink(dst) or os.path.exists(dst):
-            os.remove(dst)
-        src = os.path.join(SOURCE, name)
+    # PROTOCOL.md: universal specification. Copied or linked.
+    proto_dst = os.path.join(store, "PROTOCOL.md")
+    if (os.path.exists(proto_dst) or os.path.islink(proto_dst)) and not a.force:
+        made.append(f"{a.store}/PROTOCOL.md (exists, kept)")
+    else:
+        if os.path.islink(proto_dst) or os.path.exists(proto_dst):
+            os.remove(proto_dst)
+        proto_src = os.path.join(SOURCE, "PROTOCOL.md")
         if not a.link:
-            shutil.copy2(src, dst)
-            made.append(f"{a.store}/{name}")
-            continue
-        try:
-            # Absolute, like the README path below: the two repos are unrelated
-            # trees, so a relative link is wrong the moment either one moves.
-            os.symlink(src, dst)
-            made.append(f"{a.store}/{name} -> {src}")
-        except OSError as e:
-            shutil.copy2(src, dst)
-            made.append(f"{a.store}/{name} (copied, symlink failed: {e.strerror})")
+            shutil.copy2(proto_src, proto_dst)
+            made.append(f"{a.store}/PROTOCOL.md")
+        else:
+            try:
+                # Absolute, like the README path below: the two repos are unrelated
+                # trees, so a relative link is wrong the moment either one moves.
+                os.symlink(proto_src, proto_dst)
+                made.append(f"{a.store}/PROTOCOL.md -> {proto_src}")
+            except OSError as e:
+                shutil.copy2(proto_src, proto_dst)
+                made.append(f"{a.store}/PROTOCOL.md (copied, symlink failed: {e.strerror})")
+
+    # PARTIES.md: per-store participant registry. Always generated locally in
+    # both modes (never symlinked to source and never copied from the source repo's
+    # live registry), so each project maintains its own participants without
+    # leaking across stores or dirtying the source checkout (r036).
+    parties_dst = os.path.join(store, "PARTIES.md")
+    if (os.path.exists(parties_dst) or os.path.islink(parties_dst)) and not a.force:
+        made.append(f"{a.store}/PARTIES.md (exists, kept)")
+    else:
+        if os.path.islink(parties_dst) or os.path.exists(parties_dst):
+            os.remove(parties_dst)
+        with open(parties_dst, "w", encoding="utf-8") as f:
+            f.write(parties_template())
+        made.append(f"{a.store}/PARTIES.md")
 
     if not a.link:
         tdst = os.path.join(target, "tools")
@@ -159,7 +209,7 @@ def main():
         # Linked stores use an absolute path: a relative one across unrelated
         # trees is both unreadable and wrong the moment either repo moves.
         loc = (f"- Protocol: [`PROTOCOL.md`](PROTOCOL.md) -> `{SOURCE}/PROTOCOL.md`\n"
-               f"- Parties:  [`PARTIES.md`](PARTIES.md) -> `{SOURCE}/PARTIES.md`\n"
+               f"- Parties:  [`PARTIES.md`](PARTIES.md)\n"
                f"- Tools:    `{SOURCE}/tools/`"
                if a.link else
                "- Protocol: [`PROTOCOL.md`](PROTOCOL.md)\n- Parties:  [`PARTIES.md`](PARTIES.md)")
@@ -196,7 +246,7 @@ Scaffolded by `docket-init` from {version()} on {datetime.date.today().isoformat
     print(f"Initialised Docket {version()} in {target}\n")
     for m in made:
         print(f"  {m}")
-    parties_path = f"{SOURCE}/PARTIES.md" if a.link else f"{a.store}/PARTIES.md"
+    parties_path = f"{a.store}/PARTIES.md"
     tool = f"{SOURCE}/tools/docket-new" if a.link else "tools/docket-new"
     hooks = f"{SOURCE}/tools/git-hooks" if a.link else "tools/git-hooks"
     print(f"""
