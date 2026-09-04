@@ -559,8 +559,7 @@ untouched and route the author.
 
 Mutable source or documentation edits SHOULD NOT be committed on behalf of
 another party without an explicit handoff naming the completed paths. Immutable
-Docket filings are the safe routine case — they are finished when they exist, and
-a half-written one cannot be committed by accident. A working tree is not a
+Docket filings are the safe routine case once complete. A working tree is not a
 completion signal, and exact staging reduces accidental capture without becoming
 a lock.
 
