@@ -201,3 +201,11 @@ Agents can query open work across all approved projects at once by setting `work
     }
   }
   ```
+
+---
+
+## License
+
+Docket is released under the [MIT License](LICENSE) — specification and
+reference toolchain alike, so another implementation may quote `PROTOCOL.md`
+and vendor `tools/` without restriction.
