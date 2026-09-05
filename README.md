@@ -226,11 +226,17 @@ Agents can query open work across all approved projects at once by setting `work
 
 ## Contributors
 
-Docket is created and maintained by metet, with design, implementation, and
-review contributions from Codex, agy, Claude, and other registered Docket
-parties. Claude is a historical contributor and is no longer part of the active
-development workflow. Git history remains the detailed record of each
-contribution.
+- **metet** — creator and maintainer.
+- **Codex** — current implementation contributor.
+- **agy** — implementation and technical-review contributor.
+- **Claude** — historical protocol and tooling contributor; no longer part of
+  the active development workflow.
+- Other registered Docket parties have contributed filings and review.
+
+Agent commits use self-asserted Docket identities such as
+`codex@docket.invalid`, not GitHub-linked user accounts. GitHub therefore lists
+those commits as anonymous instead of creating contributor profile entries; this
+section and the Git history are the attribution record.
 
 ## License
 
