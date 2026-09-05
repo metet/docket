@@ -21,6 +21,11 @@ Docket has **zero external dependencies** — it relies solely on Python's stand
 - **Python:** Standard library only. Syntax floor is Python 3.8+ (due to the walrus operator in `tools/docket-new`), tested on Python 3.13+.
 - **Git:** Any modern Git supporting `core.hooksPath`.
 
+The currently available installation runs from a GitHub source checkout. A
+packaged PyPI release and official MCP Registry entry are being prepared, but
+have not been published yet. Linux is the verified platform today; macOS and
+native Windows support are targets, not current compatibility claims.
+
 ### Two-Tier Tool Layout
 
 Docket tools are organized into two groups:
@@ -45,8 +50,8 @@ Docket tools are organized into two groups:
 To add Docket to any code repository:
 
 ```bash
-# Initialize Docket in the target repo
-python3 /path/to/docket/tools/docket-init /path/to/my-project
+git clone https://github.com/metet/docket.git
+python3 docket/tools/docket-init /path/to/my-project
 ```
 
 Next steps in the initialized repository:
@@ -58,6 +63,17 @@ Next steps in the initialized repository:
    ```bash
    tools/docket-new request --from <you> --slug my-first-task --title "Initial task" --act question
    ```
+
+### What a “store” is
+
+A Docket store is just the `docket/` directory inside a project. It contains
+`INDEX.md`, `PARTIES.md`, the number reservations in `.seq/`, and the immutable
+docket filings. It is not a remote service, database, account, or shared global
+directory.
+
+Use the default name `docket/`. Custom store names are not needed for ordinary
+projects and are not part of the recommended setup while their discovery and Git
+hook behavior is under review.
 
 ---
 
@@ -149,6 +165,10 @@ tools/docket-workspace status
 
 `tools/docket-mcp` allows MCP-enabled agents (Claude Code, Qwen Code, Cursor, Codex) to interact using structured tool calls rather than raw shell scripts:
 
+Until the packaged MCP release is published, configure clients to launch
+`tools/docket-mcp` from the source checkout, as in the examples below. Do not
+install a similarly named third-party package and assume it is this project.
+
 ### Automatic Store Resolution
 When `DOCKET_STORE="docket"` (relative), the MCP server automatically checks if the agent's current working directory matches an approved workspace in `~/.config/docket/workspaces`. If matched, it routes all tool calls to `<workspace>/docket/`.
 
@@ -203,6 +223,14 @@ Agents can query open work across all approved projects at once by setting `work
   ```
 
 ---
+
+## Contributors
+
+Docket is created and maintained by metet, with design, implementation, and
+review contributions from Codex, agy, Claude, and other registered Docket
+parties. Claude is a historical contributor and is no longer part of the active
+development workflow. Git history remains the detailed record of each
+contribution.
 
 ## License
 
