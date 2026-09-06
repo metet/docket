@@ -1181,6 +1181,56 @@ check("T30", "editing project 1 does not leak localbot into source store",
 for p in (d30_copy, d30_l1, d30_l2):
     shutil.rmtree(p)
 
+# ---- T31: docket-init refresh preserves and localises PARTIES.md (r043) ----
+d31_regular = tempfile.mkdtemp(prefix="dk-r43-regular-")
+subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d31_regular],
+               capture_output=True, text=True)
+regular_parties = os.path.join(d31_regular, "docket", "PARTIES.md")
+with open(regular_parties, "a", encoding="utf-8") as f:
+    f.write("\n| `local_bot` | Local Bot | test | small | 0 | Test bot |\n")
+p31_regular = subprocess.run(
+    ["python3", os.path.join(D, "tools", "docket-init"), d31_regular, "--force"],
+    capture_output=True, text=True)
+check("T31", "--force preserves an existing local party registry",
+      p31_regular.returncode == 0 and
+      "local_bot" in docket_lib.parties(os.path.join(d31_regular, "docket")),
+      f"exit={p31_regular.returncode} stderr={p31_regular.stderr}")
+with open(os.path.join(d31_regular, "docket", "README.md"), encoding="utf-8") as f:
+    readme31 = f.read()
+check("T31", "generated README says refresh preserves local PARTIES.md",
+      "refresh them (preserves local PARTIES.md)" in readme31,
+      readme31[-240:])
+
+d31_link = tempfile.mkdtemp(prefix="dk-r43-link-")
+legacy_target = os.path.join(d31_link, "legacy-parties.md")
+with open(legacy_target, "w", encoding="utf-8") as f:
+    f.write("# Parties\n\n## Registry\n\n"
+            "| name | runtime | model | context | cost | strengths |\n"
+            "| --- | --- | --- | --- | --- | --- |\n"
+            "| `human` | terminal | — | — | — | Authority |\n"
+            "| `legacy_bot` | Legacy | test | small | 0 | Test bot |\n")
+legacy_store = os.path.join(d31_link, "docket")
+os.makedirs(legacy_store)
+legacy_parties = os.path.join(legacy_store, "PARTIES.md")
+os.symlink(legacy_target, legacy_parties)
+p31_link = subprocess.run(
+    ["python3", os.path.join(D, "tools", "docket-init"), d31_link, "--force"],
+    capture_output=True, text=True)
+check("T31", "--force materializes a legacy PARTIES.md symlink",
+      p31_link.returncode == 0 and os.path.isfile(legacy_parties) and
+      not os.path.islink(legacy_parties),
+      f"exit={p31_link.returncode} islink={os.path.islink(legacy_parties)} stderr={p31_link.stderr}")
+check("T31", "legacy symlink migration preserves registered parties",
+      "legacy_bot" in docket_lib.parties(legacy_store),
+      str(docket_lib.parties(legacy_store)))
+with open(legacy_target, encoding="utf-8") as f:
+    legacy_target_after = f.read()
+check("T31", "legacy symlink migration does not modify its old target",
+      "legacy_bot" in legacy_target_after, legacy_target_after)
+
+for p in (d31_regular, d31_link):
+    shutil.rmtree(p)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0

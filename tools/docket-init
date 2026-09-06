@@ -8,7 +8,7 @@ points each agent CLI's context file at them. Safe to re-run: existing files are
 left alone unless --force, and the block written into AGENTS.md/CLAUDE.md is
 delimited so a second run replaces it rather than duplicating it.
 """
-import os, sys, shutil, argparse, datetime
+import os, sys, shutil, argparse, datetime, tempfile
 
 HERE   = os.path.dirname(os.path.abspath(__file__))
 SOURCE = os.path.dirname(HERE)
@@ -166,16 +166,36 @@ def main():
                 shutil.copy2(proto_src, proto_dst)
                 made.append(f"{a.store}/PROTOCOL.md (copied, symlink failed: {e.strerror})")
 
-    # PARTIES.md: per-store participant registry. Always generated locally in
-    # both modes (never symlinked to source and never copied from the source repo's
-    # live registry), so each project maintains its own participants without
-    # leaking across stores or dirtying the source checkout (r036).
+    # PARTIES.md: per-store participant registry. Always local in both modes
+    # (never symlinked to source and never copied from the source repo's live
+    # registry), so each project maintains its own participants without leaking
+    # across stores or dirtying the source checkout (r036, r043).  Old Docket
+    # versions did create this as a symlink; materialise those links in place
+    # without changing their content.  A regular registry is user data, so even
+    # --force must never replace it.
     parties_dst = os.path.join(store, "PARTIES.md")
-    if (os.path.exists(parties_dst) or os.path.islink(parties_dst)) and not a.force:
+    if os.path.islink(parties_dst):
+        try:
+            with open(parties_dst, encoding="utf-8") as f:
+                parties_content = f.read()
+        except OSError as e:
+            sys.exit(f"docket-init: cannot materialize {parties_dst}: {e}")
+
+        tmp_name = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                    "w", encoding="utf-8", dir=store,
+                    prefix=".PARTIES.md.", delete=False) as f:
+                tmp_name = f.name
+                f.write(parties_content)
+            os.replace(tmp_name, parties_dst)
+        finally:
+            if tmp_name and os.path.exists(tmp_name):
+                os.unlink(tmp_name)
+        made.append(f"{a.store}/PARTIES.md (legacy symlink materialized, kept)")
+    elif os.path.exists(parties_dst):
         made.append(f"{a.store}/PARTIES.md (exists, kept)")
     else:
-        if os.path.islink(parties_dst) or os.path.exists(parties_dst):
-            os.remove(parties_dst)
         with open(parties_dst, "w", encoding="utf-8") as f:
             f.write(parties_template())
         made.append(f"{a.store}/PARTIES.md")
@@ -225,7 +245,7 @@ request, immutable append-only filings inside it.
 the index or an existing filing.
 
 Scaffolded by `docket-init` from {version()} on {datetime.date.today().isoformat()}.
-{"Protocol and tools are copies; re-run docket-init --force to refresh them." if not a.link else ""}
+{"Protocol and tools are copies; re-run docket-init --force to refresh them (preserves local PARTIES.md)." if not a.link else ""}
 """)
         made.append(f"{a.store}/README.md")
 
