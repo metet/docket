@@ -23,8 +23,8 @@ Docket has **zero external dependencies** — it relies solely on Python's stand
 
 The currently available installation runs from a GitHub source checkout. A
 packaged PyPI release and official MCP Registry entry are being prepared, but
-have not been published yet. Linux is the verified platform today; macOS and
-native Windows support are targets, not current compatibility claims.
+have not been published yet. Source-checkout operation is continuously verified
+on Linux, macOS, and native Windows with Python 3.8, 3.11, and 3.13.
 
 ### Two-Tier Tool Layout
 
@@ -52,6 +52,13 @@ To add Docket to any code repository:
 ```bash
 git clone https://github.com/metet/docket.git
 python3 docket/tools/docket-init /path/to/my-project
+```
+
+On Windows PowerShell, use the Python launcher and a Windows path:
+
+```powershell
+git clone https://github.com/metet/docket.git
+py -3 docket/tools/docket-init C:\path\to\my-project
 ```
 
 Next steps in the initialized repository:
@@ -169,6 +176,7 @@ tools/docket-workspace status
 Until the packaged MCP release is published, configure clients to launch
 `tools/docket-mcp` from the source checkout, as in the examples below. Do not
 install a similarly named third-party package and assume it is this project.
+On native Windows, use `py` as the command and put `-3` before the script path.
 
 ### Automatic Store Resolution
 The MCP server checks whether the agent's current working directory matches an approved workspace in `~/.config/docket/workspaces`. If matched, it routes all tool calls to `<workspace>/docket/`.
