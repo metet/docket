@@ -1,0 +1,86 @@
+#!/bin/sh
+""":"
+# Git for Windows runs hooks through its bundled shell, but Python may be named
+# python3, python, or exposed only through the py launcher. Keep this tiny
+# polyglot launcher in the hook itself; Python treats it as a string literal.
+if command -v python3 >/dev/null 2>&1 &&
+        python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
+    exec python3 "$0" "$@"
+elif command -v python >/dev/null 2>&1 &&
+        python -c 'import sys; raise SystemExit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
+    exec python "$0" "$@"
+elif command -v py >/dev/null 2>&1 &&
+        py -3 -c 'import sys; raise SystemExit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
+    exec py -3 "$0" "$@"
+fi
+echo "pre-commit: Python 3.8 or newer was not found" >&2
+exit 1
+":"""
+"""Refuse a commit that breaks Docket lint, or this repository's test suite.
+
+The shell/Python header above is deliberately the only shell logic. Once a
+Python 3 interpreter is found, paths and subprocess arguments are handled as
+lists so the hook behaves the same under POSIX shells and Git for Windows.
+
+The lint checks the working tree, not a reconstructed staged tree. It gates
+only errors attributable to filings in this commit; pre-existing immutable
+errors remain visible without making the hook impossible to adopt (r011).
+"""
+import os
+import subprocess
+import sys
+
+
+def git(*args, capture=False):
+    return subprocess.run(
+        ["git", *args],
+        capture_output=capture,
+        text=True,
+    )
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    return 1
+
+
+def main():
+    hook_dir = os.path.dirname(os.path.abspath(__file__))
+    tools = os.path.dirname(hook_dir)
+    root_result = git("rev-parse", "--show-toplevel", capture=True)
+    if root_result.returncode != 0:
+        return fail("pre-commit: cannot determine the repository root")
+    root = root_result.stdout.strip()
+    os.chdir(root)
+
+    # DOCKET_STORE remains a low-level compatibility override. Repositories
+    # scaffolded by docket-init always use the canonical docket/ directory.
+    store = os.environ.get("DOCKET_STORE", "docket")
+    if os.path.isdir(store):
+        staged = git("diff", "--cached", "--quiet")
+        lint_argv = [sys.executable, os.path.join(tools, "docket-lint"), store]
+        if staged.returncode == 1:
+            changed = git(
+                "diff", "--cached", "--name-only", "--diff-filter=ACM",
+                "--", store, capture=True)
+            if changed.returncode != 0:
+                return fail("pre-commit: cannot inspect staged Docket filings")
+            paths = [p for p in changed.stdout.splitlines() if p]
+            lint_argv.extend(["--gate", *paths])
+        elif staged.returncode != 0:
+            return fail("pre-commit: cannot inspect the staged changes")
+
+        if subprocess.run(lint_argv).returncode != 0:
+            suffix = " on a filing in this commit" if staged.returncode == 1 else ""
+            return fail(f"pre-commit: docket-lint failed{suffix}")
+
+    # docket-test is copied only in the source toolchain. A consuming project
+    # runs its local lint but never reaches back into an unrelated test suite.
+    test = os.path.join(root, "tools", "docket-test")
+    if os.path.isfile(test) and subprocess.run([sys.executable, test]).returncode != 0:
+        return fail("pre-commit: docket-test failed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

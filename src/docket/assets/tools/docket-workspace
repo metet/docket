@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""docket-workspace — manage trusted Docket workspaces.
+
+Enforces explicit boundary control: only registered directories can be
+inspected or used as Docket stores. No blind directory scanning.
+
+Config file:
+  ~/.config/docket/workspaces      (plain text, one path per line)
+  or ~/.config/docket/workspaces.json
+
+Usage:
+  tools/docket-workspace add [PATH...]      Add folder(s) to trusted workspaces (defaults to .)
+  tools/docket-workspace remove [PATH...]   Remove folder(s) from trusted workspaces
+  tools/docket-workspace list               List all trusted workspaces and their docket status
+  tools/docket-workspace status             Consolidated dashboard of open work across all workspaces
+"""
+import sys, os
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from docket_lib import (
+    workspaces_config_path,
+    load_workspaces,
+    save_workspaces,
+    dockets,
+    validate_docket,
+)
+
+def cmd_add(args):
+    paths = args or ["."]
+    current = load_workspaces()
+    added = []
+    for p in paths:
+        p_abs = os.path.abspath(os.path.expanduser(p))
+        if not os.path.isdir(p_abs):
+            print(f"error: directory does not exist: {p_abs}", file=sys.stderr)
+            continue
+        if p_abs not in current:
+            current.append(p_abs)
+            added.append(p_abs)
+            has_docket = os.path.isdir(os.path.join(p_abs, "docket"))
+            note = " (docket store found)" if has_docket else " (no docket/ store yet)"
+            print(f"added {p_abs}{note}")
+        else:
+            print(f"already registered: {p_abs}")
+    if added:
+        save_workspaces(current)
+        print(f"\nConfig saved to {workspaces_config_path()}")
+
+def cmd_remove(args):
+    if not args:
+        print("usage: docket-workspace remove <path>...", file=sys.stderr)
+        sys.exit(1)
+    current = load_workspaces()
+    removed = []
+    for p in args:
+        p_abs = os.path.abspath(os.path.expanduser(p))
+        if p_abs in current:
+            current.remove(p_abs)
+            removed.append(p_abs)
+            print(f"removed {p_abs}")
+        else:
+            print(f"not found in workspaces: {p_abs}")
+    if removed:
+        save_workspaces(current)
+        print(f"\nConfig saved to {workspaces_config_path()}")
+
+def cmd_list(args):
+    cfg = workspaces_config_path()
+    ws_list = load_workspaces()
+    print(f"Config: {cfg}")
+    if not ws_list:
+        print("No workspaces configured.")
+        print("Add one with: docket-workspace add <path>")
+        return
+
+    print(f"\n{len(ws_list)} trusted workspace(s):")
+    for ws in ws_list:
+        st_path = os.path.join(ws, "docket")
+        if not os.path.isdir(ws):
+            print(f"  ❌ {ws} (directory missing)")
+            continue
+        if not os.path.isdir(st_path):
+            print(f"  ⚪ {ws} (no docket/ store)")
+            continue
+        dk_list = dockets(st_path)
+        open_count = 0
+        waiting_on = []
+        for d in dk_list:
+            try:
+                _, _, _, _, st = validate_docket(st_path, d)
+                if st.get("status") in ("open", "blocked"):
+                    open_count += 1
+                    w = st.get("waiting_on")
+                    if w and w not in waiting_on:
+                        waiting_on.append(w)
+            except Exception:
+                pass
+        turn_str = f"waiting on {', '.join(waiting_on)}" if waiting_on else "all clear"
+        print(f"  ✓ {ws}  [{open_count} open, {turn_str}]")
+
+def cmd_status(args):
+    ws_list = load_workspaces()
+    if not ws_list:
+        print("No workspaces configured in", workspaces_config_path())
+        print("Add one with: docket-workspace add <path>")
+        return
+
+    found_any = False
+    for ws in ws_list:
+        st_path = os.path.join(ws, "docket")
+        if not os.path.isdir(st_path):
+            continue
+        rows = []
+        for d in dockets(st_path):
+            try:
+                _, _, _, _, st = validate_docket(st_path, d)
+                if st.get("status") in ("resolved", "withdrawn"):
+                    continue
+                w = st.get("waiting_on") or "-"
+                rows.append(f"  {d:<28} status={st['status']}  assignee={st['assignee'] or '-'}  waiting_on={w}")
+            except Exception:
+                pass
+        if rows:
+            found_any = True
+            name = os.path.basename(ws)
+            print(f"\n=== [{name}] {ws} ===")
+            print("\n".join(rows))
+
+    if not found_any:
+        print("All clear: no open dockets across any configured workspaces.")
+
+def main():
+    args = sys.argv[1:]
+    cmd = args[0] if args else "list"
+    rest = args[1:]
+
+    if cmd in ("add", "-a", "--add"):
+        cmd_add(rest)
+    elif cmd in ("remove", "rm", "-r", "--remove"):
+        cmd_remove(rest)
+    elif cmd in ("list", "ls", "-l", "--list"):
+        cmd_list(rest)
+    elif cmd in ("status", "dashboard", "-s"):
+        cmd_status(rest)
+    elif cmd in ("help", "-h", "--help"):
+        print(__doc__.strip())
+    else:
+        print(f"unknown command: {cmd}\n")
+        print(__doc__.strip())
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

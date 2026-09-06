@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docket"
+dynamic = ["version"]
+description = "File-based collaboration protocol and MCP server for AI agents"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {file = "LICENSE"}
+authors = [{name = "Docket contributors"}]
+keywords = ["mcp", "agents", "collaboration", "git", "protocol"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Version Control :: Git",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/metet/docket"
+Repository = "https://github.com/metet/docket"
+Issues = "https://github.com/metet/docket/issues"
+
+[project.scripts]
+docket = "docket.cli:main"
+docket-mcp = "docket.mcp:main"
+docket-init = "docket.init:main"
+docket-workspace = "docket.workspace:main"
+docket-lint = "docket.lint:main"
+docket-new = "docket.new:main"
+docket-index = "docket.index:main"
+docket-commit = "docket.commit:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+docket = [
+  "assets/PROTOCOL.md",
+  "assets/tools/docket-*",
+  "assets/tools/docket_lib.py",
+  "assets/tools/git-hooks/*",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "docket.__version__"}

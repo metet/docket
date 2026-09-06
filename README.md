@@ -1,4 +1,5 @@
 # Docket
+<!-- mcp-name: io.github.metet/docket -->
 
 A file-based protocol that lets AI agents from different vendors collaborate through plain files in a git repo — no server, no shared SDK, no vendor lock-in.
 
@@ -16,21 +17,24 @@ A file-based protocol that lets AI agents from different vendors collaborate thr
 
 ## Installation & Requirements
 
-Docket has **zero external dependencies** — it relies solely on Python's standard library and Git.
+Docket has **zero runtime dependencies** — it relies solely on Python's standard library and Git.
 
-- **Python:** Standard library only. Syntax floor is Python 3.8+ (due to the walrus operator in `tools/docket-new`), tested on Python 3.13+.
+- **Python:** 3.8 or newer.
 - **Git:** Any modern Git supporting `core.hooksPath`.
+- **Packaged launcher:** [`uv`](https://docs.astral.sh/uv/) provides `uvx` and
+  installs Docket in an isolated environment.
 
-The currently available installation runs from a GitHub source checkout. A
-packaged PyPI release and official MCP Registry entry are being prepared, but
-have not been published yet. Source-checkout operation is continuously verified
-on Linux, macOS, and native Windows with Python 3.8, 3.11, and 3.13.
+The PyPI package and official MCP Registry entry are prepared in this repository
+but have not been published yet. Until the human maintainer makes that release,
+use the source-checkout instructions below; do not install an unrelated package
+with the same name. Docket is continuously verified on Linux, macOS, and native
+Windows with Python 3.8, 3.11, and 3.13.
 
 ### Two-Tier Tool Layout
 
 Docket tools are organized into two groups:
 
-1. **Source / Shared Toolchain** (run from the Docket source clone across projects):
+1. **Shared Toolchain** (installed by `uvx`, or run from the Docket source clone):
    - `tools/docket-mcp`: Stdio JSON-RPC 2.0 MCP server for agent integration.
    - `tools/docket-workspace`: Workspace registry manager for multi-repo coordination.
    - `tools/docket-test`: Self-contained regression test suite.
@@ -47,19 +51,36 @@ Docket tools are organized into two groups:
 
 ## Getting Started: Scaffolding a Repository
 
-To add Docket to any code repository:
+After version 0.3.0 is published, the standard installation is one command:
+
+```bash
+uvx docket init /path/to/my-project
+```
+
+The native Windows PowerShell form is the same; quote paths containing spaces:
+
+```powershell
+uvx docket init "C:\path\to\my project"
+```
+
+For now, install from the public source checkout:
 
 ```bash
 git clone https://github.com/metet/docket.git
 python3 docket/tools/docket-init /path/to/my-project
 ```
 
-On Windows PowerShell, use the Python launcher and a Windows path:
+On Windows PowerShell, use the Python launcher:
 
 ```powershell
 git clone https://github.com/metet/docket.git
 py -3 docket/tools/docket-init C:\path\to\my-project
 ```
+
+The default copies the protocol and per-repository tools, so the initialized
+project does not depend on the installer remaining present. `--link` is intended
+for development from a persistent source checkout; do not use it with an
+ephemeral `uvx` environment.
 
 Next steps in the initialized repository:
 
@@ -97,7 +118,7 @@ Docket includes a zero-dependency reference toolchain in `tools/`:
 | **`tools/docket-init`** | Scaffold a new Docket store in any code repository (supports `--link` symlink mode). |
 | **`tools/docket-index`** | Regenerate `docket/INDEX.md` turn-tracker and status tables from filings. |
 | **`tools/docket-lint`** | Validate schema, front matter, and state-machine legality across a store. |
-| **`tools/docket-test`** | Self-contained regression test suite (158 automated behavioral checks). |
+| **`tools/docket-test`** | Self-contained regression test suite (package, platform, and protocol behavior). |
 | **`tools/docket-commit`** | Commit as a named party: sets the git author for that one invocation and records a `Docket-Party:` trailer. |
 | **`tools/git-hooks/`** | Tracked git hooks. `pre-commit` runs the lint and the suite; `commit-msg` refuses a commit whose declared party contradicts the filings it carries. Opt in per clone with `git config core.hooksPath tools/git-hooks`. |
 
@@ -105,7 +126,7 @@ Docket includes a zero-dependency reference toolchain in `tools/`:
 
 ```bash
 python3 tools/docket-lint    # schema and state-machine legality
-python3 tools/docket-test    # 158 behavioural checks
+python3 tools/docket-test    # behavioural checks
 ```
 
 To have git run both before every commit, once per clone:
@@ -171,15 +192,30 @@ tools/docket-workspace status
 
 ## MCP Server Integration (`docket-mcp`)
 
-`tools/docket-mcp` allows MCP-enabled agents (Claude Code, Qwen Code, Cursor, Codex) to interact using structured tool calls rather than raw shell scripts:
+`docket-mcp` allows MCP-enabled agents (Claude Code, Qwen Code, Cursor, Codex) to interact using structured tool calls rather than raw shell scripts.
 
-Until the packaged MCP release is published, configure clients to launch
-`tools/docket-mcp` from the source checkout, as in the examples below. Do not
-install a similarly named third-party package and assume it is this project.
-On native Windows, use `py` as the command and put `-3` before the script path.
+After publication, install `io.github.metet/docket` from an MCP Registry-aware
+client and set `DOCKET_PARTY` to that client's registered name. For clients that
+take a command configuration directly, the portable standard is:
+
+```json
+{
+  "command": "uvx",
+  "args": ["docket"],
+  "env": {"DOCKET_PARTY": "your-party-name"}
+}
+```
+
+`uvx docket` starts the stdio server with no subcommand; `uvx docket mcp` and
+`uvx --from docket docket-mcp` are equivalent explicit forms. Before the package
+is published, replace that command with the source-checkout launcher shown below.
 
 ### Automatic Store Resolution
-The MCP server checks whether the agent's current working directory matches an approved workspace in `~/.config/docket/workspaces`. If matched, it routes all tool calls to `<workspace>/docket/`.
+
+The MCP server first checks the current directory, then the enclosing Git root,
+then a matching approved workspace in `~/.config/docket/workspaces`, and finally
+roots supplied by the MCP client. This lets one installation serve many projects
+without placing machine-specific paths in the package.
 
 ### Automatic Cross-Workspace Turn Detection
 Even when an agent is running inside a specific repository, `docket_list` automatically checks all other trusted workspaces registered in `~/.config/docket/workspaces`. If there is any open docket waiting on that agent in another project, `docket_list` surfaces it:
@@ -201,7 +237,11 @@ Agents can query open work across all approved projects at once by setting `work
 }
 ```
 
-### Registration Examples
+### Source-checkout registration examples
+
+These are usable now and remain useful for Docket development. On native
+Windows, use `py` as the command and put `-3` before the script path.
+
 * **Claude Code:**
   ```bash
   claude mcp add docket -e DOCKET_PARTY=claude -- python3 /path/to/tools/docket-mcp

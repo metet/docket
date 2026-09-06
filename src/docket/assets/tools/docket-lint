@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Validate a Docket store. Exit 1 on any error.
+
+All validity logic lives in docket_lib.validate_docket, which docket-index also
+calls, so the two tools cannot disagree about what is valid."""
+import os, re, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from docket_lib import parties, dockets, validate_docket
+
+def main(store, gate=None):
+    """Validate a store. With `gate` set, report everything but fail only on
+    errors attributable to those paths.
+
+    A gate exists to stop new faults, not to demand a clean store. Filings are
+    immutable, so an invalid one can never be touched by a later commit and can
+    never be repaired either -- errata cannot correct a filename and rule 1
+    forbids a rename. Failing forever on it would make the hook uninstallable in
+    exactly the repository that earned it. Gating on what a commit changes
+    grandfathers the scar without an allowlist, and without any state about
+    state (r011).
+    """
+    known = parties(store)
+    errors, warnings, n = [], [], 0
+    if not known:
+        # Say so rather than skipping quietly: with no registry, from: and
+        # assignee are unchecked, and a clean run would otherwise imply they
+        # had been checked. Re-run docket-init to restore it.
+        warnings.append(f"no PARTIES.md in {store}/ or {store}/../ — party names "
+                        "in from: and assignee are NOT being checked")
+    for d in sorted(os.listdir(store)):
+        if not os.path.isdir(os.path.join(store, d)) or d == ".seq": continue
+        if not re.match(r"^r\d{3}(-[a-z0-9-]+)?$", d):
+            errors.append(f"{d}: directory must match r<NNN>-<slug>"); continue
+        filings, invalid, errs, warns, _ = validate_docket(store, d, known)
+        n += len(filings); errors += errs; warnings += warns
+    for x in warnings: print(f"warn:  {x}")
+    for e in errors:   print(f"ERROR: {e}")
+
+    gated = errors
+    if gate is not None:
+        # An error reads "<docket>/<filing>: msg" or "<docket>: msg". A path
+        # under the docket directory answers for both: touching any filing in a
+        # docket makes that docket's own errors this commit's problem.
+        # Two kinds of error, matched differently on purpose. A per-filing error
+        # gates only the filing it names -- a sibling's fault is immutable and
+        # pre-existing, and blaming a new filing for it would grandfather
+        # nothing. A docket-level error ("no 000-request.md", a reused sequence
+        # number) gates any filing in that docket, because adding one can cause
+        # it.
+        files, dirs = set(), set()
+        for g in gate:
+            try:
+                g = os.path.relpath(os.path.abspath(g), os.path.abspath(store))
+            except ValueError:
+                # Different Windows drives cannot be relative to one another;
+                # such a path is necessarily outside this store.
+                continue
+            g = g.replace(os.sep, "/")
+            if g != ".." and not g.startswith("../"):
+                files.add(g)
+                dirs.add(g.split("/", 1)[0])
+        gated = [e for e in errors
+                 if any(e.startswith(f + ": ") for f in files)
+                 or any(e.startswith(d + ": ") for d in dirs)]
+
+    print(f"\n{n} filings checked, {len(errors)} errors, {len(warnings)} warnings")
+    if gate is not None and errors and not gated:
+        print(f"gate: no error attributable to this change; "
+              f"{len(errors)} pre-existing error(s) left as they are")
+    return 1 if gated else 0
+
+if __name__ == "__main__":
+    # docket-lint [store] [--gate [PATH ...]]
+    # --gate with no paths gates nothing: a commit that touches no filing cannot
+    # introduce one. That is different from omitting --gate, which gates all.
+    argv = sys.argv[1:]
+    gate = None
+    if "--gate" in argv:
+        i = argv.index("--gate")
+        gate = argv[i + 1:]
+        argv = argv[:i]
+    sys.exit(main(argv[0] if argv else "docket", gate))

@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Synchronise wheel assets with the canonical source-checkout tools.
+
+Run without arguments to refresh the copies, or with ``--check`` in tests and
+CI. Package entry points execute these assets, so a mismatch is a release error.
+"""
+from pathlib import Path
+import argparse
+import filecmp
+import shutil
+import sys
+
+
+ROOT = Path(__file__).resolve().parent.parent
+DEST = ROOT / "src" / "docket" / "assets"
+FILES = [
+    Path("PROTOCOL.md"),
+    Path("tools/docket_lib.py"),
+    Path("tools/docket-mcp"),
+    Path("tools/docket-init"),
+    Path("tools/docket-workspace"),
+    Path("tools/docket-lint"),
+    Path("tools/docket-new"),
+    Path("tools/docket-index"),
+    Path("tools/docket-commit"),
+    Path("tools/git-hooks/pre-commit"),
+    Path("tools/git-hooks/commit-msg"),
+]
+
+
+def target(relative):
+    return DEST / relative if relative.parts[0] == "tools" else DEST / relative.name
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="docket-sync-package")
+    parser.add_argument("--check", action="store_true",
+                        help="report stale or missing assets without changing them")
+    args = parser.parse_args()
+    stale = []
+    for relative in FILES:
+        source = ROOT / relative
+        destination = target(relative)
+        if not destination.is_file() or not filecmp.cmp(source, destination, shallow=False):
+            stale.append(relative.as_posix())
+            if not args.check:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+    if stale and args.check:
+        print("package assets are stale or missing:", file=sys.stderr)
+        for name in stale:
+            print("  " + name, file=sys.stderr)
+        print("run: python tools/docket-sync-package", file=sys.stderr)
+        return 1
+    verb = "checked" if args.check else "synchronised"
+    print(f"{len(FILES)} package assets {verb}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Create a well-formed Docket filing.
+
+Supplies everything a party should not have to get right by hand: the date,
+the docket number (allocated atomically), the sequence number, the filename,
+and the id. Refuses to write a filing that would violate authority rules, and
+never overwrites an existing file.
+
+  docket-new request --from qwen --slug dot-spacing --title "..." [--act question]
+  docket-new filing  --docket r004 --from claude --label answer --title "..."
+  docket-new close   --docket r004 --from qwen --title "..." [--status resolved]
+
+Body is read from stdin, or --body, or left as a stub.
+"""
+import os, re, sys, argparse, datetime
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from docket_lib import (parties, load, reduce_docket, ACTS, STATUSES, CURRENT,
+                        TERMINAL, CORRECTABLE, split_flow, quote_flow, scalar)
+
+def die(msg):
+    print(f"docket-new: {msg}", file=sys.stderr); sys.exit(2)
+
+def allocate(store, a):
+    """PROTOCOL 1: exclusive mkdir of .seq/rNNN, retry on collision.
+    The check IS the create -- no check-then-create window."""
+    seq = os.path.join(store, ".seq"); os.makedirs(seq, exist_ok=True)
+    # Floor against BOTH reservations and existing docket directories. Git cannot
+    # track an empty directory, so a store cloned before reservations carried a
+    # marker file would otherwise restart at r001 and collide with live dockets.
+    n = max([int(m.group(1)) for e in os.listdir(seq)
+             if (m := re.match(r"^r(\d{3})$", e))] +
+            [int(m.group(1)) for e in os.listdir(store)
+             if (m := re.match(r"^r(\d{3})", e)) and os.path.isdir(os.path.join(store, e))]
+            or [0])
+    while True:
+        n += 1
+        did = f"r{n:03d}"
+        try:
+            os.mkdir(os.path.join(seq, did))
+        except FileExistsError:
+            continue
+        except OSError as e:
+            die(f"cannot reserve {did}: {e}")
+        # The mkdir above is the atomic reservation. This marker only makes it
+        # survive git, which does not track empty directories.
+        with open(os.path.join(seq, did, "claimed"), "w", encoding="utf-8") as f:
+            f.write(f"{did} reserved by {a.frm} at "
+                    f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n")
+        return did
+
+def find_dir(store, did):
+    for e in sorted(os.listdir(store)):
+        if e == did or e.startswith(did + "-"):
+            if os.path.isdir(os.path.join(store, e)): return e
+    die(f"docket {did} not found in {store}/")
+
+def fm_lines(d):
+    out = []
+    for k, v in d.items():
+        if v in (None, "", []): continue
+        out.append(f"{k}: [{', '.join(quote_flow(x) for x in v)}]"
+                   if isinstance(v, list) else f"{k}: {v}")
+    return "\n".join(out)
+
+def write_exclusive(path, text):
+    """r010: exclusive create, so two writers cannot silently overwrite."""
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        die(f"{path} already exists — filings are immutable, pick another label")
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f: f.write(text)
+
+def main():
+    p = argparse.ArgumentParser(prog="docket-new", add_help=True)
+    p.add_argument("kind", choices=["request", "filing", "close"])
+    p.add_argument("--store", default="docket")
+    p.add_argument("--from", dest="frm", required=True, metavar="PARTY")
+    p.add_argument("--title", required=True)
+    p.add_argument("--slug"); p.add_argument("--docket"); p.add_argument("--label")
+    p.add_argument("--act"); p.add_argument("--assignee")
+    p.add_argument("--parent"); p.add_argument("--status"); p.add_argument("--blocked-on")
+    p.add_argument("--supersedes", metavar="FILING_ID"); p.add_argument("--corrects", metavar="FIELDS")
+    p.add_argument("--refs"); p.add_argument("--evidence"); p.add_argument("--body")
+    p.add_argument("--dry-run", action="store_true")
+    a = p.parse_args()
+
+    store = a.store
+    if not os.path.isdir(store): die(f"no store at {store}/")
+    known = parties(store)
+    if known and a.frm not in known:
+        die(f"party {a.frm!r} is not registered in PARTIES.md {sorted(known)}")
+    if a.act and a.act not in ACTS: die(f"act {a.act!r} not in {sorted(ACTS)}")
+    if a.assignee and a.assignee not in ("none","None") and known and a.assignee not in known:
+        die(f"--assignee {a.assignee!r} is not a registered party")
+    if a.status and a.status not in STATUSES: die(f"status {a.status!r} not in {sorted(STATUSES)}")
+
+    body = a.body if a.body else (sys.stdin.read() if not sys.stdin.isatty() else "")
+    if not body.strip(): body = "_(no body supplied)_"
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Quote-aware, so --evidence '"a, b", c' is two items and not three.
+    lst = lambda s: [scalar(x) for x in split_flow(s) if x.strip()] if s else None
+
+    if a.kind == "request":
+        if not a.slug: die("--slug is required for a request")
+        if not re.match(r"^[a-z0-9][a-z0-9-]*$", a.slug):
+            die("--slug must be lowercase letters, digits and hyphens")
+        did = allocate(store, a)
+        dirname = f"{did}-{a.slug}"
+        os.makedirs(os.path.join(store, dirname), exist_ok=True)
+        fn, fid, typ = "000-request.md", f"{did}/000", "request"
+        # PROTOCOL 3: a report needs no reply, so it is born resolved unless
+        # the filer explicitly asks for it to stay open.
+        status = a.status or ("resolved" if a.act == "report" else "open")
+    else:
+        if not a.docket: die(f"--docket is required for a {a.kind}")
+        did = a.docket.split("-")[0]
+        dirname = find_dir(store, did)
+        filings = load(os.path.join(store, dirname))
+        st = reduce_docket(filings)
+        nxt = max([int(f["num"]) for f in filings] or [0]) + 1
+        if a.kind == "close":
+            if a.frm != st["requester"]:
+                die(f"only the requester ({st['requester']}) may close {did}; "
+                    f"file a filing with --act answer to propose closure instead")
+            typ = "disposition"
+            status = a.status or "resolved"
+            if status not in TERMINAL: die(f"close needs a terminal status, not {status!r}")
+            label = a.label or "disposition"
+        else:
+            typ, status, label = "filing", a.status, (a.label or a.act or "filing")
+            if status in TERMINAL:
+                die(f"a filing may not set status={status}; use `docket-new close`")
+            if status and a.frm not in (st["requester"], st["assignee"]):
+                die(f"{a.frm} may not set status={status} on {did} "
+                    f"(requester={st['requester']}, assignee={st['assignee']})")
+            if a.assignee and a.frm not in (st["requester"], st["assignee"]) and not (
+                    st["assignee"] is None and a.act == "ack" and a.assignee == a.frm):
+                die(f"{a.frm} may not set assignee on {did}; an unclaimed docket "
+                    "is claimed with --act ack --assignee <yourself>")
+            # An erratum is checked here, at write time. docket-lint catches a
+            # malformed one too, but filings are immutable: by then the only
+            # remedy is another erratum correcting the correction.
+            if a.act == "erratum":
+                if not a.supersedes or not a.corrects:
+                    die("--act erratum requires --supersedes <filing id> "
+                        "and --corrects <field,...>")
+                tgt = next((f for f in filings if f["fm"].get("id") == a.supersedes), None)
+                if tgt is None:
+                    die(f"--supersedes {a.supersedes!r} names no filing in {did}")
+                if tgt["fm"].get("from") != a.frm:
+                    die(f"only {tgt['fm'].get('from')} may correct {a.supersedes}; "
+                        "file an objection instead")
+                bad = [f for f in (x.strip() for x in a.corrects.split(","))
+                       if f not in CORRECTABLE]
+                if bad:
+                    die(f"--corrects {bad} not correctable; allowed: {sorted(CORRECTABLE)}")
+            elif a.supersedes or a.corrects:
+                die("--supersedes and --corrects are only valid with --act erratum")
+        if not re.match(r"^[a-z0-9][a-z0-9-]*$", label):
+            die("--label must be lowercase letters, digits and hyphens")
+        fn  = f"{nxt:03d}-{a.frm}-{label}.md"
+        fid = f"{did}/{nxt:03d}-{a.frm}"
+
+    front = fm_lines({
+        "protocol": CURRENT, "id": fid, "docket": did,
+        "parent": a.parent, "supersedes": a.supersedes, "corrects": lst(a.corrects),
+        "from": a.frm,
+        "type": typ, "act": a.act, "status": status,
+        "assignee": a.assignee, "blocked_on": a.blocked_on,
+        "refs": lst(a.refs), "evidence": lst(a.evidence), "date": now,
+    })
+    text = f"---\n{front}\n---\n\n# {a.title}\n\n{body.rstrip()}\n"
+    path = os.path.join(store, dirname, fn)
+    if a.dry_run:
+        print(f"--- would write {path} ---\n{text}"); return
+    write_exclusive(path, text)
+    print(path)
+
+if __name__ == "__main__":
+    main()

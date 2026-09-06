@@ -287,6 +287,16 @@ check("T14", "survives a client that refuses roots", is_err and "no docket store
 # a working relative store must not pay for a round trip
 asked, out, is_err = roots_session({"roots":{}}, None, cwd=d)
 check("T14", "no roots round trip when cwd already works", not asked and not is_err, out[:60])
+
+# uvx and editor integrations often start the server below the repository root.
+# Git gives us a precise boundary, so no workspace registration or directory
+# crawl is needed to find the canonical store from a nested working directory.
+subprocess.run(["git", "init", d], capture_output=True, text=True)
+nested = os.path.join(d, "src", "package")
+os.makedirs(nested)
+asked, out, is_err = roots_session({"roots":{}}, None, cwd=nested)
+check("T14", "resolves the store from a nested Git working directory",
+      not asked and not is_err, out[:80])
 remove_tree(d); remove_tree(outside); remove_tree(_empty_ws_dir)
 
 # ---- T15: workspace allowlist resolution and CLI ----
@@ -1304,6 +1314,55 @@ with open(crlf_path, "wb") as f:
 check("T33", "protocol reads normalize CRLF to LF",
       "\r" not in docket_lib.read(crlf_path), repr(docket_lib.read(crlf_path)))
 remove_tree(d33)
+
+# ---- T34: the installable package is the source toolchain, not a fork (r046) ----
+sync34 = subprocess.run(
+    [sys.executable, os.path.join(D, "tools", "docket-sync-package"), "--check"],
+    capture_output=True, text=True, cwd=D)
+check("T34", "packaged tool assets match the source-checkout commands",
+      sync34.returncode == 0, (sync34.stderr or sync34.stdout)[:160])
+
+with open(os.path.join(D, "server.json"), encoding="utf-8") as f:
+    registry34 = json.load(f)
+package34 = registry34.get("packages", [{}])[0]
+check("T34", "MCP Registry metadata uses the accepted PyPI stdio contract",
+      registry34.get("$schema", "").endswith("/2025-12-11/server.schema.json") and
+      registry34.get("name") == "io.github.metet/docket" and
+      package34.get("registryType") == "pypi" and
+      package34.get("identifier") == "docket" and
+      package34.get("transport") == {"type": "stdio"} and
+      package34.get("runtimeHint") == "uvx",
+      repr(registry34)[:240])
+check("T34", "package and Registry versions share the server version",
+      registry34.get("version") == docket_lib.__version__ ==
+      package34.get("version") == _mcp.SERVER_VERSION,
+      repr((registry34.get("version"), docket_lib.__version__,
+            package34.get("version"), _mcp.SERVER_VERSION)))
+with open(os.path.join(D, "README.md"), encoding="utf-8") as f:
+    readme34 = f.read()
+check("T34", "the PyPI README carries the MCP ownership token",
+      "mcp-name: io.github.metet/docket" in readme34,
+      "ownership token missing")
+
+package_env34 = dict(os.environ)
+package_env34["PYTHONPATH"] = os.path.join(D, "src") + (
+    os.pathsep + package_env34["PYTHONPATH"] if package_env34.get("PYTHONPATH") else "")
+help34 = subprocess.run([sys.executable, "-m", "docket", "--help"],
+                        capture_output=True, text=True, cwd=D, env=package_env34)
+check("T34", "the unified package command exposes its subcommands",
+      help34.returncode == 0 and "With no COMMAND" in help34.stdout and
+      "init" in help34.stdout and "mcp" in help34.stdout,
+      (help34.stderr or help34.stdout)[:160])
+
+d34 = tempfile.mkdtemp(prefix="dk-r46-package-")
+init34 = subprocess.run([sys.executable, "-m", "docket.init", d34],
+                        capture_output=True, text=True, cwd=D, env=package_env34)
+check("T34", "the package entry point scaffolds from bundled assets",
+      init34.returncode == 0 and
+      os.path.isfile(os.path.join(d34, "tools", "docket-new")) and
+      os.path.isfile(os.path.join(d34, "docket", "PROTOCOL.md")),
+      f"exit={init34.returncode} stderr={init34.stderr[:120]}")
+remove_tree(d34)
 
 # ---- report ----
 w = max(len(r[1]) for r in results)

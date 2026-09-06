@@ -27,3 +27,20 @@ jobs:
         run: python tools/docket-test
       - name: Lint the protocol store
         run: python tools/docket-lint docket
+
+  package:
+    name: Build and install package artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install the PEP 517 frontend
+        run: python -m pip install build
+      - name: Verify packaged sources are synchronized
+        run: python tools/docket-sync-package --check
+      - name: Build wheel and source distribution
+        run: python -m build
+      - name: Install and smoke-test the artifacts
+        run: python tools/docket-package-test dist

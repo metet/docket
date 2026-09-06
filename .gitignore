@@ -5,6 +5,11 @@
 __pycache__/
 *.pyc
 
+# Python build artifacts
+build/
+dist/
+*.egg-info/
+
 # local editor state — the store is meant to be read in whatever you like
 .obsidian/
 .trash/

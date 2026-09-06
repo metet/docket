@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.metet/docket",
+  "description": "File-based collaboration protocol and toolchain for multi-vendor AI agents in git repositories",
+  "version": "0.3.0",
+  "repository": {
+    "url": "https://github.com/metet/docket",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "docket",
+      "version": "0.3.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeHint": "uvx"
+    }
+  ]
+}
