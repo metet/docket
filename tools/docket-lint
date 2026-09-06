@@ -49,10 +49,16 @@ def main(store, gate=None):
         # it.
         files, dirs = set(), set()
         for g in gate:
-            g = os.path.relpath(os.path.abspath(g), os.path.abspath(store))
-            if not g.startswith(".."):
+            try:
+                g = os.path.relpath(os.path.abspath(g), os.path.abspath(store))
+            except ValueError:
+                # Different Windows drives cannot be relative to one another;
+                # such a path is necessarily outside this store.
+                continue
+            g = g.replace(os.sep, "/")
+            if g != ".." and not g.startswith("../"):
                 files.add(g)
-                dirs.add(g.split(os.sep)[0])
+                dirs.add(g.split("/", 1)[0])
         gated = [e for e in errors
                  if any(e.startswith(f + ": ") for f in files)
                  or any(e.startswith(d + ": ") for d in dirs)]
