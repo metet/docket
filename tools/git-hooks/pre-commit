@@ -1,62 +1,86 @@
 #!/bin/sh
-# Refuse a commit that breaks the lint, or the suite when this is the toolchain's
-# own repo.
-#
-# Lives in a tracked directory rather than .git/hooks, which is neither tracked
-# nor cloned: every party gets the same gate after one setup line.
-#
-#   git config core.hooksPath <path to this directory>
-#
-# Check core.hooksPath is unset before setting it -- it replaces the repository's
-# whole hooks directory, so an existing .git/hooks would silently stop firing.
-#
-# It resolves its tools from its own location, not from the repository being
-# committed, because a store scaffolded with `docket-init --link` lives in a repo
-# that has no tools/ of its own (r010).
-#
-# Scope, stated so nobody assumes more than it does: this checks the WORKING
-# TREE, not the staged content. A partial `git add` can therefore commit a state
-# this hook never saw. Stashing to test the index exactly costs more than it buys
-# in a repo where every party commits whole files, and a stash that fails to pop
-# loses work -- a worse failure than the one it would catch.
-#
-# Bypass with `git commit --no-verify` when you mean to.
-set -e
-
-hookdir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-tools=$(dirname "$hookdir")
-root=$(git rev-parse --show-toplevel)
-cd "$root"
-
-# The store is named by DOCKET_STORE, or is the conventional docket/. A repo with
-# no store is not an error: the hook may be installed before the store exists.
-store=${DOCKET_STORE:-docket}
-if [ -d "$store" ]; then
-    # Gate on exit status, never on output. docket-lint carries standing warnings
-    # on purpose -- r003/003 is an ineffective erratum kept as the record of a
-    # mistake (r004) -- and a gate that read stderr would force the repo to erase
-    # its own evidence to stay green.
-    #
-    # Fail only on errors this commit is responsible for. An invalid filing can
-    # never be repaired -- errata cannot correct a filename and rule 1 forbids a
-    # rename -- so gating on a clean store would make this hook uninstallable in
-    # any repo that already has one, which is precisely where it is wanted
-    # (r011). Everything is still reported; only attribution decides the exit.
-    if git diff --cached --quiet 2>/dev/null; then
-        # Nothing staged at all: a manual run, so check the whole store.
-        python3 "$tools/docket-lint" "$store" || {
-            echo "pre-commit: docket-lint failed"; exit 1; }
-    else
-        # Filing names are [a-z0-9-] by rule, so word-splitting them is safe.
-        python3 "$tools/docket-lint" "$store" --gate \
-            $(git diff --cached --name-only --diff-filter=ACM -- "$store") || {
-            echo "pre-commit: docket-lint failed on a filing in this commit"; exit 1; }
-    fi
+""":"
+# Git for Windows runs hooks through its bundled shell, but Python may be named
+# python3, python, or exposed only through the py launcher. Keep this tiny
+# polyglot launcher in the hook itself; Python treats it as a string literal.
+if command -v python3 >/dev/null 2>&1 &&
+        python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
+    exec python3 "$0" "$@"
+elif command -v python >/dev/null 2>&1 &&
+        python -c 'import sys; raise SystemExit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
+    exec python "$0" "$@"
+elif command -v py >/dev/null 2>&1 &&
+        py -3 -c 'import sys; raise SystemExit(sys.version_info < (3, 8))' >/dev/null 2>&1; then
+    exec py -3 "$0" "$@"
 fi
+echo "pre-commit: Python 3.8 or newer was not found" >&2
+exit 1
+":"""
+"""Refuse a commit that breaks Docket lint, or this repository's test suite.
 
-# docket-test exercises the toolchain itself, so it is meaningful only in the
-# repository that owns it. A consuming repo runs the lint and nothing else.
-if [ -f "$root/tools/docket-test" ]; then
-    python3 "$root/tools/docket-test" || {
-        echo "pre-commit: docket-test failed"; exit 1; }
-fi
+The shell/Python header above is deliberately the only shell logic. Once a
+Python 3 interpreter is found, paths and subprocess arguments are handled as
+lists so the hook behaves the same under POSIX shells and Git for Windows.
+
+The lint checks the working tree, not a reconstructed staged tree. It gates
+only errors attributable to filings in this commit; pre-existing immutable
+errors remain visible without making the hook impossible to adopt (r011).
+"""
+import os
+import subprocess
+import sys
+
+
+def git(*args, capture=False):
+    return subprocess.run(
+        ["git", *args],
+        capture_output=capture,
+        text=True,
+    )
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    return 1
+
+
+def main():
+    hook_dir = os.path.dirname(os.path.abspath(__file__))
+    tools = os.path.dirname(hook_dir)
+    root_result = git("rev-parse", "--show-toplevel", capture=True)
+    if root_result.returncode != 0:
+        return fail("pre-commit: cannot determine the repository root")
+    root = root_result.stdout.strip()
+    os.chdir(root)
+
+    # DOCKET_STORE remains a low-level compatibility override. Repositories
+    # scaffolded by docket-init always use the canonical docket/ directory.
+    store = os.environ.get("DOCKET_STORE", "docket")
+    if os.path.isdir(store):
+        staged = git("diff", "--cached", "--quiet")
+        lint_argv = [sys.executable, os.path.join(tools, "docket-lint"), store]
+        if staged.returncode == 1:
+            changed = git(
+                "diff", "--cached", "--name-only", "--diff-filter=ACM",
+                "--", store, capture=True)
+            if changed.returncode != 0:
+                return fail("pre-commit: cannot inspect staged Docket filings")
+            paths = [p for p in changed.stdout.splitlines() if p]
+            lint_argv.extend(["--gate", *paths])
+        elif staged.returncode != 0:
+            return fail("pre-commit: cannot inspect the staged changes")
+
+        if subprocess.run(lint_argv).returncode != 0:
+            suffix = " on a filing in this commit" if staged.returncode == 1 else ""
+            return fail(f"pre-commit: docket-lint failed{suffix}")
+
+    # docket-test is copied only in the source toolchain. A consuming project
+    # runs its local lint but never reaches back into an unrelated test suite.
+    test = os.path.join(root, "tools", "docket-test")
+    if os.path.isfile(test) and subprocess.run([sys.executable, test]).returncode != 0:
+        return fail("pre-commit: docket-test failed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

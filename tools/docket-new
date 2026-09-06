@@ -43,7 +43,7 @@ def allocate(store, a):
             die(f"cannot reserve {did}: {e}")
         # The mkdir above is the atomic reservation. This marker only makes it
         # survive git, which does not track empty directories.
-        with open(os.path.join(seq, did, "claimed"), "w") as f:
+        with open(os.path.join(seq, did, "claimed"), "w", encoding="utf-8") as f:
             f.write(f"{did} reserved by {a.frm} at "
                     f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n")
         return did
@@ -68,7 +68,7 @@ def write_exclusive(path, text):
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:
         die(f"{path} already exists — filings are immutable, pick another label")
-    with os.fdopen(fd, "w") as f: f.write(text)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f: f.write(text)
 
 def main():
     p = argparse.ArgumentParser(prog="docket-new", add_help=True)

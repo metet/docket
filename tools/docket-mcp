@@ -16,6 +16,12 @@ Registration:
   claude mcp add docket -e DOCKET_PARTY=claude -- python3 /path/to/tools/docket-mcp
 """
 import sys, os, json, subprocess
+from urllib.parse import unquote, urlparse
+
+if hasattr(sys.stdin, "reconfigure"):
+    # MCP stdio is UTF-8 on every platform; do not inherit a Windows code page.
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 
 HERE     = os.path.dirname(os.path.abspath(__file__))
 NEW      = os.path.join(HERE, "docket-new")
@@ -117,7 +123,7 @@ def store():
         roots = client_request("roots/list") or {}
         for r in roots.get("roots") or []:
             uri = r.get("uri") or ""
-            path = uri[7:] if uri.startswith("file://") else uri
+            path = root_path(uri)
             cand = workspace_store(path)
             if os.path.isdir(cand):
                 log(f"docket-mcp: store resolved via roots -> {cand}")
@@ -130,6 +136,22 @@ def store():
     # checks and a registry read. Only a resolution that succeeded is worth
     # remembering.
     return STORE                              # unresolved; fail with a real path
+
+
+def root_path(uri):
+    """Convert an MCP root file URI into a native path, including Windows drives."""
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return uri
+    path = unquote(parsed.path)
+    if parsed.netloc:
+        path = f"//{parsed.netloc}{path}"
+    # A standards-compliant Windows URI is file:///C:/path. Windows path APIs
+    # expect C:/path, while POSIX correctly retains the leading slash.
+    if (os.name == "nt" and len(path) >= 3 and path[0] == "/" and
+            path[1].isalpha() and path[2] == ":"):
+        path = path[1:]
+    return os.path.normpath(path)
 
 def workspace_store(ws):
     """Find the docket store directory inside a given workspace path.
@@ -446,7 +468,7 @@ def run_new(kind, args, target=None):
         found_st, _ = find_docket_store(args["docket"])
         if found_st:
             target_store = found_st
-    argv = ["python3", NEW, kind, "--store", target_store, "--from", PARTY,
+    argv = [sys.executable, NEW, kind, "--store", target_store, "--from", PARTY,
             "--title", args["title"]]
     for flag, key in (("--slug","slug"), ("--docket","docket"), ("--act","act"),
                       ("--assignee","assignee"), ("--parent","parent"),
@@ -463,7 +485,8 @@ def run_new(kind, args, target=None):
         # quote_flow keeps an item that contains a comma from being split back
         # into two by docket-new's own comma parsing.
         argv += [flag, ", ".join(quote_flow(x) for x in v) if isinstance(v, list) else str(v)]
-    p = subprocess.run(argv, input=args.get("body", ""), capture_output=True, text=True)
+    p = subprocess.run(argv, input=args.get("body", ""), capture_output=True,
+                       text=True, encoding="utf-8")
     if p.returncode != 0:
         return text((p.stderr or p.stdout).strip() or "docket-new failed", True)
     path = p.stdout.strip()
@@ -473,8 +496,8 @@ def run_new(kind, args, target=None):
     # can delete. Warn inside the success instead, and name the repair command
     # rather than only the fact -- NFR-7, qwen has to act on this without first
     # deducing that docket-index is a runnable script (r021).
-    idx = subprocess.run(["python3", os.path.join(HERE, "docket-index"), target_store],
-                         capture_output=True, text=True)
+    idx = subprocess.run([sys.executable, os.path.join(HERE, "docket-index"), target_store],
+                         capture_output=True, text=True, encoding="utf-8")
     if idx.returncode != 0:
         diag = (idx.stderr or idx.stdout).strip().splitlines()
         return text(f"filed {path}\n"
@@ -482,7 +505,7 @@ def run_new(kind, args, target=None):
                     f"regenerated (docket-index exited {idx.returncode}). "
                     f"Do not file it again.\n"
                     + "".join(f"  {ln}\n" for ln in diag[-5:])
-                    + f"Repair it with: python3 "
+                    + f"Repair it with: {sys.executable} "
                       f"{os.path.join(HERE, 'docket-index')} {target_store}")
     return text(f"filed {path}")
 

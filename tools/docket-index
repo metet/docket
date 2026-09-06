@@ -61,7 +61,8 @@ def main(store):
         out += ["| docket | title | status |", "| --- | --- | --- |"]
         out += [f"| [`{r['id']}`]({r['dir']}/) | {r['title']} | {r['status']} |" for r in done]
     else: out += ["*None yet.*"]
-    open(os.path.join(store, "INDEX.md"), "w").write("\n".join(out) + "\n")
+    open(os.path.join(store, "INDEX.md"), "w", encoding="utf-8", newline="\n").write(
+        "\n".join(out) + "\n")
     print(f"INDEX.md: {len(openr)} open ({len(unclaimed)} unclaimed), {len(done)} closed")
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ showed up in what actually got written to a filing.
   python3 tools/docket-test        # exits 1 if anything fails
 """
 import os, sys, json, shutil, subprocess, tempfile
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 D    = os.path.dirname(HERE)
@@ -19,7 +20,7 @@ results = []
 def server(lines, party="qwen", store="docket", cwd=None):
     inp = "\n".join(json.dumps(l) if isinstance(l, dict) else l for l in lines) + "\n"
     env = dict(os.environ, DOCKET_PARTY=party, DOCKET_STORE=store)
-    p = subprocess.run(["python3", MCP], input=inp, capture_output=True, text=True, cwd=cwd, env=env)
+    p = subprocess.run([sys.executable, MCP], input=inp, capture_output=True, text=True, cwd=cwd, env=env)
     out = [json.loads(l) for l in p.stdout.splitlines() if l.strip().startswith("{")]
     return p.returncode, out, p.stderr
 
@@ -29,7 +30,7 @@ def tc(name, args, i=2):
 
 def fresh():
     d = tempfile.mkdtemp(prefix="dk-")
-    subprocess.run(["python3", os.path.join(D,"tools","docket-init"), d, "--link"],
+    subprocess.run([sys.executable, os.path.join(D,"tools","docket-init"), d, "--link"],
                    capture_output=True, text=True)
     # Populate the full test registry in the fixture store
     shutil.copy2(os.path.join(D, "PARTIES.md"), os.path.join(d, "docket", "PARTIES.md"))
@@ -101,7 +102,7 @@ if "erratum" in acts:
     server([INIT, tc("docket_file", {"docket":"r001","title":"E","body":"b","act":"erratum",
                                      "supersedes":"r001/001-qwen","corrects":"evidence",
                                      "evidence":"git:bbb"})], party="qwen", cwd=d)
-    lint = subprocess.run(["python3", os.path.join(D,"tools","docket-lint"), "docket"],
+    lint = subprocess.run([sys.executable, os.path.join(D,"tools","docket-lint"), "docket"],
                           capture_output=True, text=True, cwd=d)
     check("T6", "erratum filed via MCP lints clean", lint.returncode == 0, lint.stdout.strip().splitlines()[-1])
 
@@ -138,7 +139,7 @@ import importlib, docket_lib; importlib.reload(docket_lib)
 fl = docket_lib.load(os.path.join(d, "docket", "r001-q"))
 got = docket_lib.as_list(next(f["fm"] for f in fl if f["fm"].get("act") == "answer").get("evidence"))
 check("T10", "comma inside a list item survives", got == [EV, "git:aaa"], str(got))
-lint = subprocess.run(["python3", os.path.join(D,"tools","docket-lint"), "docket"],
+lint = subprocess.run([sys.executable, os.path.join(D,"tools","docket-lint"), "docket"],
                       capture_output=True, text=True, cwd=d)
 check("T10", "store still lints clean", lint.returncode == 0, lint.stdout.strip().splitlines()[-1])
 shutil.rmtree(d)
@@ -179,7 +180,7 @@ check("T9", "all tools are closed-world", not bad, f"wrong: {bad}")
 
 # ---- T12: act is not correctable, and saying so must not poison the store ----
 d = fresh()
-new_ = lambda *a, **k: subprocess.run(["python3", os.path.join(D,"tools","docket-new"), *a],
+new_ = lambda *a, **k: subprocess.run([sys.executable, os.path.join(D,"tools","docket-new"), *a],
                                       input="b", capture_output=True, text=True, cwd=d)
 new_("request", "--store","docket","--from","claude","--slug","q","--title","Q","--act","question")
 new_("filing","--store","docket","--docket","r001","--from","qwen","--act","answer",
@@ -196,7 +197,7 @@ open(os.path.join(d,"docket","r001-q","002-qwen-erratum.md"),"w").write(
     "---\nprotocol: docket/0.2\nid: r001/002-qwen\ndocket: r001\n"
     "parent: r001/001-qwen\nfrom: qwen\ntype: filing\nact: erratum\n"
     "supersedes: r001/001-qwen\ncorrects: [act]\ndate: 2026-08-29T10:00:00Z\n---\n\n# E\n")
-lint = subprocess.run(["python3", os.path.join(D,"tools","docket-lint"), "docket"],
+lint = subprocess.run([sys.executable, os.path.join(D,"tools","docket-lint"), "docket"],
                       capture_output=True, text=True, cwd=d)
 check("T12", "an act erratum warns, never errors", lint.returncode == 0,
       lint.stdout.strip().splitlines()[-1])
@@ -209,7 +210,7 @@ shutil.rmtree(d)
 
 # ---- T13: blocked_on routing decided by registry membership ----
 d = fresh()
-new_ = lambda *a: subprocess.run(["python3", os.path.join(D,"tools","docket-new"), *a],
+new_ = lambda *a: subprocess.run([sys.executable, os.path.join(D,"tools","docket-new"), *a],
                                  input="b", capture_output=True, text=True, cwd=d)
 sys.path.insert(0, os.path.join(D, "tools"))
 import importlib, docket_lib; importlib.reload(docket_lib)
@@ -239,7 +240,7 @@ def roots_session(caps, answer, cwd, store_env="docket", tool="docket_list"):
     """
     env = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE=store_env,
                DOCKET_WORKSPACES_FILE=_empty_ws)
-    pr = subprocess.Popen(["python3", MCP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    pr = subprocess.Popen([sys.executable, MCP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env, cwd=cwd)
     wr = lambda m: (pr.stdin.write(json.dumps(m) + "\n"), pr.stdin.flush())
     rd = lambda: json.loads(pr.stdout.readline())
@@ -257,7 +258,7 @@ def roots_session(caps, answer, cwd, store_env="docket", tool="docket_list"):
 d = fresh()
 outside = tempfile.mkdtemp(prefix="dk-cwd-")   # a cwd with no store, like an editor's
 asked, out, is_err = roots_session({"roots":{"listChanged":True}},
-    lambda i: {"jsonrpc":"2.0","id":i,"result":{"roots":[{"uri":"file://"+d,"name":"r"}]}},
+    lambda i: {"jsonrpc":"2.0","id":i,"result":{"roots":[{"uri":Path(d).resolve().as_uri(),"name":"r"}]}},
     cwd=outside)
 check("T14", "asks the client for roots when the store is missing", asked, "no roots/list sent")
 check("T14", "resolves the store from a root", not is_err, out[:80])
@@ -290,7 +291,7 @@ open(ws_cfg, "w").write(f"{d1}\n{d2}\n")
 
 # Test match_workspace via DOCKET_WORKSPACES_FILE
 env_ws = dict(os.environ, DOCKET_WORKSPACES_FILE=ws_cfg)
-p_cli = subprocess.run(["python3", os.path.join(D, "tools", "docket-workspace"), "list"],
+p_cli = subprocess.run([sys.executable, os.path.join(D, "tools", "docket-workspace"), "list"],
                        capture_output=True, text=True, env=env_ws)
 check("T15", "docket-workspace list sees configured workspaces",
       d1 in p_cli.stdout and d2 in p_cli.stdout, p_cli.stdout[:80])
@@ -298,7 +299,7 @@ check("T15", "docket-workspace list sees configured workspaces",
 # Test MCP resolves via trusted workspace matching cwd
 env_mcp = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE="docket",
                DOCKET_WORKSPACES_FILE=ws_cfg)
-pr = subprocess.run(["python3", MCP],
+pr = subprocess.run([sys.executable, MCP],
                     input=json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call",
                                      "params":{"name":"docket_list","arguments":{}}}) + "\n",
                     capture_output=True, text=True, cwd=d1, env=env_mcp)
@@ -307,7 +308,7 @@ check("T15", "MCP resolves store via trusted workspace",
       not out_mcp["result"]["isError"], str(out_mcp)[:80])
 
 # Test workspace='all' aggregates across workspaces
-pr_all = subprocess.run(["python3", MCP],
+pr_all = subprocess.run([sys.executable, MCP],
                         input=json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/call",
                                          "params":{"name":"docket_list","arguments":{"workspace":"all"}}}) + "\n",
                         capture_output=True, text=True, cwd=outside, env=env_mcp)
@@ -329,14 +330,14 @@ env_ws = dict(os.environ, DOCKET_WORKSPACES_FILE=ws_cfg)
 def outside_call(name, args, party="claude"):
     inp = "\n".join(json.dumps(x) for x in [INIT, tc(name, args)]) + "\n"
     env = dict(env_ws, DOCKET_PARTY=party, DOCKET_STORE="docket")
-    pr = subprocess.run(["python3", MCP], input=inp, capture_output=True,
+    pr = subprocess.run([sys.executable, MCP], input=inp, capture_output=True,
                         text=True, cwd=outside, env=env)
     r = next((m["result"] for m in (json.loads(l) for l in pr.stdout.splitlines()
                                     if l.strip().startswith("{"))
               if m.get("id") == 2), {})
     return r.get("isError"), r.get("content", [{}])[0].get("text", "")
 
-subprocess.run(["python3", os.path.join(D, "tools", "docket-new"), "request",
+subprocess.run([sys.executable, os.path.join(D, "tools", "docket-new"), "request",
                 "--store", os.path.join(d1, "docket"), "--from", "claude",
                 "--slug", "reach", "--title", "Reach", "--act", "task",
                 "--assignee", "claude"], input="b", capture_output=True, text=True)
@@ -389,7 +390,7 @@ check("T16", "instructions stay within a small budget", len(instr) < 2000,
 # only when a human remembered it.
 d = fresh()
 def dn(kind, **kw):
-    argv = ["python3", os.path.join(D, "tools", "docket-new"), kind,
+    argv = [sys.executable, os.path.join(D, "tools", "docket-new"), kind,
             "--store", os.path.join(d, "docket"), "--from", kw.pop("frm")]
     for k, v in kw.items():
         argv += [f"--{k.replace('_','-')}", v]
@@ -435,7 +436,7 @@ shutil.rmtree(d)
 # fabricated midnight, which the lint then flagged as a placeholder.
 d = fresh()
 st = os.path.join(d, "docket")
-subprocess.run(["python3", os.path.join(D, "tools", "docket-new"), "request",
+subprocess.run([sys.executable, os.path.join(D, "tools", "docket-new"), "request",
                 "--store", st, "--from", "claude", "--slug", "dates",
                 "--title", "Dates", "--act", "task"],
                input="b", capture_output=True, text=True)
@@ -445,7 +446,7 @@ def lint_of(name, date):
     open(os.path.join(dk, name), "w").write(
         f"---\nprotocol: docket/0.2\nid: r001/001-claude\ndocket: r001\n"
         f"from: claude\ntype: filing\nact: answer\ndate: {date}\n---\n\n# T\n\nb\n")
-    r = subprocess.run(["python3", os.path.join(D, "tools", "docket-lint"), st],
+    r = subprocess.run([sys.executable, os.path.join(D, "tools", "docket-lint"), st],
                        capture_output=True, text=True)
     os.remove(os.path.join(dk, name))
     return r.returncode, r.stdout
@@ -474,7 +475,7 @@ shutil.rmtree(d)
 # in the one repo that has already earned it.
 d = fresh()
 st = os.path.join(d, "docket")
-subprocess.run(["python3", os.path.join(D, "tools", "docket-new"), "request",
+subprocess.run([sys.executable, os.path.join(D, "tools", "docket-new"), "request",
                 "--store", st, "--from", "claude", "--slug", "g", "--title", "G",
                 "--act", "task"], input="b", capture_output=True, text=True)
 dk = os.path.join(st, "r001-g")
@@ -484,7 +485,7 @@ open(bad, "w").write("---\nprotocol: docket/0.2\nid: r001/001-claude\n"
                      "date: 2026-08-30\n---\n\n# B\n\nb\n")
 
 def lint(*extra):
-    return subprocess.run(["python3", os.path.join(D, "tools", "docket-lint"), st,
+    return subprocess.run([sys.executable, os.path.join(D, "tools", "docket-lint"), st,
                            *extra], capture_output=True, text=True)
 
 r = lint()
@@ -519,7 +520,7 @@ shutil.rmtree(d)
 d = fresh()
 st = os.path.join(d, "docket")
 def mk(kind, **kw):
-    argv = ["python3", os.path.join(D, "tools", "docket-new"), kind,
+    argv = [sys.executable, os.path.join(D, "tools", "docket-new"), kind,
             "--store", st, "--from", kw.pop("frm")]
     for k, v in kw.items():
         argv += [f"--{k.replace('_','-')}", v]
@@ -606,7 +607,7 @@ def repo():
     return d
 
 def newf(d, **kw):
-    args = ["python3", os.path.join(D, "tools", "docket-new"), kw.pop("kind"),
+    args = [sys.executable, os.path.join(D, "tools", "docket-new"), kw.pop("kind"),
             "--store", "docket"]
     for k, v in kw.items():
         args += ["--" + k.replace("_", "-"), v]
@@ -616,7 +617,7 @@ def stage(d, *paths):
     git(d, "add", *paths)
 
 def commit(d, party=None, msg="m"):
-    cmd = (["python3", COMMIT, "--from", party] if party else ["git", "commit"])
+    cmd = ([sys.executable, COMMIT, "--from", party] if party else ["git", "commit"])
     return subprocess.run([*cmd, "-m", msg], cwd=d, capture_output=True,
                           text=True, env=GENV)
 
@@ -795,7 +796,7 @@ def route(store, dirname):
 
 d = fresh(); st_ = os.path.join(d, "docket")
 def dn2(kind, **kw):
-    a = ["python3", os.path.join(D, "tools", "docket-new"), kind, "--store", st_]
+    a = [sys.executable, os.path.join(D, "tools", "docket-new"), kind, "--store", st_]
     for k, v in kw.items():
         a += ["--" + k.replace("_", "-"), str(v)]
     return subprocess.run(a, capture_output=True, text=True)
@@ -926,12 +927,12 @@ coll  = tempfile.mkdtemp(prefix="dk-coll-")       # two workspaces, one basename
 c1    = os.path.join(coll, "one", "proj"); os.makedirs(c1)
 c2    = os.path.join(coll, "two", "proj"); os.makedirs(c2)
 for c in (c1, c2):
-    subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), c],
+    subprocess.run([sys.executable, os.path.join(D, "tools", "docket-init"), c],
                    capture_output=True, text=True)
     shutil.copy2(os.path.join(D, "PARTIES.md"), os.path.join(c, "docket", "PARTIES.md"))
 bare  = tempfile.mkdtemp(prefix="dk-bare-")       # registered, but has no store
 unreg = tempfile.mkdtemp(prefix="dk-unreg-")      # a real store nobody registered
-subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), unreg],
+subprocess.run([sys.executable, os.path.join(D, "tools", "docket-init"), unreg],
                capture_output=True, text=True)
 shutil.copy2(os.path.join(D, "PARTIES.md"), os.path.join(unreg, "docket", "PARTIES.md"))
 outside = tempfile.mkdtemp(prefix="dk-outside-")
@@ -943,7 +944,7 @@ def ws_open(args, cwd, party="claude"):
     inp = "\n".join(json.dumps(x) for x in [INIT, tc("docket_open", args)]) + "\n"
     env = dict(os.environ, DOCKET_PARTY=party, DOCKET_STORE="docket",
                DOCKET_WORKSPACES_FILE=ws_cfg)
-    pr = subprocess.run(["python3", MCP], input=inp, capture_output=True,
+    pr = subprocess.run([sys.executable, MCP], input=inp, capture_output=True,
                         text=True, cwd=cwd, env=env)
     r = next((m["result"] for m in (json.loads(l) for l in pr.stdout.splitlines()
                                     if l.strip().startswith("{"))
@@ -1045,14 +1046,14 @@ check("T26", "the server version is not tied to the filing format",
 # memoised relative "docket" starts working again by itself as soon as the
 # directory exists -- and the test passed against the unfixed code.
 late = tempfile.mkdtemp(prefix="dk-late-")
-subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), late],
+subprocess.run([sys.executable, os.path.join(D, "tools", "docket-init"), late],
                capture_output=True, text=True)
 shutil.copy2(os.path.join(D, "PARTIES.md"), os.path.join(late, "docket", "PARTIES.md"))
 sub27 = os.path.join(late, "sub"); os.makedirs(sub27)
 cfg27 = os.path.join(late, "workspaces"); open(cfg27, "w").write("")
 env27 = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE="docket",
              DOCKET_WORKSPACES_FILE=cfg27)
-proc = subprocess.Popen(["python3", MCP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+proc = subprocess.Popen([sys.executable, MCP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL, text=True, cwd=sub27, env=env27)
 def rpc27(msg):
     proc.stdin.write(json.dumps(msg) + "\n"); proc.stdin.flush()
@@ -1091,7 +1092,7 @@ if os.path.exists(idx28):
 os.makedirs(idx28)
 inp28 = "\n".join(json.dumps(x) for x in
                   [INIT, tc("docket_open", dict(base, slug="index-broken"))]) + "\n"
-pr28 = subprocess.run(["python3", MCP], input=inp28, capture_output=True, text=True,
+pr28 = subprocess.run([sys.executable, MCP], input=inp28, capture_output=True, text=True,
                       cwd=d28, env=dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE="docket"))
 r28 = next((m["result"] for m in (json.loads(l) for l in pr28.stdout.splitlines()
                                   if l.strip().startswith("{")) if m.get("id") == 2), None)
@@ -1113,7 +1114,11 @@ shutil.rmtree(d28)
 # ---- T29: docket-init copies git-hooks and docket-commit (r033) ----
 d29 = tempfile.mkdtemp(prefix="dk-init-")
 subprocess.run(["git", "init", d29], capture_output=True, text=True)
-p29 = subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d29],
+subprocess.run(["git", "-C", d29, "config", "user.name", "Docket Test"],
+               capture_output=True, text=True)
+subprocess.run(["git", "-C", d29, "config", "user.email", "docket-test@example.invalid"],
+               capture_output=True, text=True)
+p29 = subprocess.run([sys.executable, os.path.join(D, "tools", "docket-init"), d29],
                      capture_output=True, text=True)
 hooks_dir = os.path.join(d29, "tools", "git-hooks")
 check("T29", "docket-init creates tools/git-hooks/",
@@ -1135,13 +1140,14 @@ subprocess.run(["git", "-C", d29, "add", "."], capture_output=True, text=True)
 cp_fail = subprocess.run(["git", "-C", d29, "commit", "-m", "test: invalid filing"],
                          capture_output=True, text=True)
 check("T29", "core.hooksPath blocks invalid filing in downstream repo",
-      cp_fail.returncode != 0, f"exit={cp_fail.returncode} stdout={cp_fail.stdout} stderr={cp_fail.stderr}")
+      cp_fail.returncode != 0 and "pre-commit: docket-lint failed" in cp_fail.stderr,
+      f"exit={cp_fail.returncode} stdout={cp_fail.stdout} stderr={cp_fail.stderr}")
 shutil.rmtree(d29)
 
 # ---- T30: docket-init provisions minimal local registry (r036) ----
 import docket_lib
 d30_copy = tempfile.mkdtemp(prefix="dk-r36-c-")
-subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d30_copy],
+subprocess.run([sys.executable, os.path.join(D, "tools", "docket-init"), d30_copy],
                capture_output=True, text=True)
 c_parties_path = os.path.join(d30_copy, "docket", "PARTIES.md")
 check("T30", "copy mode creates local PARTIES.md",
@@ -1153,14 +1159,20 @@ check("T30", "copy mode leaves initial registry with human only",
 
 d30_l1 = tempfile.mkdtemp(prefix="dk-r36-l1-")
 d30_l2 = tempfile.mkdtemp(prefix="dk-r36-l2-")
-subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d30_l1, "--link"],
-               capture_output=True, text=True)
-subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d30_l2, "--link"],
-               capture_output=True, text=True)
+p30_l1 = subprocess.run(
+    [sys.executable, os.path.join(D, "tools", "docket-init"), d30_l1, "--link"],
+    capture_output=True, text=True)
+p30_l2 = subprocess.run(
+    [sys.executable, os.path.join(D, "tools", "docket-init"), d30_l2, "--link"],
+    capture_output=True, text=True)
 l1_proto = os.path.join(d30_l1, "docket", "PROTOCOL.md")
 l1_parties = os.path.join(d30_l1, "docket", "PARTIES.md")
-check("T30", "--link links PROTOCOL.md",
-      os.path.islink(l1_proto), f"islink={os.path.islink(l1_proto)}")
+check("T30", "--link provides PROTOCOL.md on every platform",
+      p30_l1.returncode == 0 and os.path.isfile(l1_proto),
+      f"exit={p30_l1.returncode} stderr={p30_l1.stderr}")
+check("T30", "--link either links or reports its copy fallback",
+      os.path.islink(l1_proto) or "copied, symlink failed:" in p30_l1.stdout,
+      f"islink={os.path.islink(l1_proto)} stdout={p30_l1.stdout}")
 check("T30", "--link creates local unlinked PARTIES.md",
       os.path.isfile(l1_parties) and not os.path.islink(l1_parties),
       f"islink={os.path.islink(l1_parties)}")
@@ -1183,13 +1195,13 @@ for p in (d30_copy, d30_l1, d30_l2):
 
 # ---- T31: docket-init refresh preserves and localises PARTIES.md (r043) ----
 d31_regular = tempfile.mkdtemp(prefix="dk-r43-regular-")
-subprocess.run(["python3", os.path.join(D, "tools", "docket-init"), d31_regular],
+subprocess.run([sys.executable, os.path.join(D, "tools", "docket-init"), d31_regular],
                capture_output=True, text=True)
 regular_parties = os.path.join(d31_regular, "docket", "PARTIES.md")
 with open(regular_parties, "a", encoding="utf-8") as f:
     f.write("\n| `local_bot` | Local Bot | test | small | 0 | Test bot |\n")
 p31_regular = subprocess.run(
-    ["python3", os.path.join(D, "tools", "docket-init"), d31_regular, "--force"],
+    [sys.executable, os.path.join(D, "tools", "docket-init"), d31_regular, "--force"],
     capture_output=True, text=True)
 check("T31", "--force preserves an existing local party registry",
       p31_regular.returncode == 0 and
@@ -1212,21 +1224,28 @@ with open(legacy_target, "w", encoding="utf-8") as f:
 legacy_store = os.path.join(d31_link, "docket")
 os.makedirs(legacy_store)
 legacy_parties = os.path.join(legacy_store, "PARTIES.md")
-os.symlink(legacy_target, legacy_parties)
-p31_link = subprocess.run(
-    ["python3", os.path.join(D, "tools", "docket-init"), d31_link, "--force"],
-    capture_output=True, text=True)
-check("T31", "--force materializes a legacy PARTIES.md symlink",
-      p31_link.returncode == 0 and os.path.isfile(legacy_parties) and
-      not os.path.islink(legacy_parties),
-      f"exit={p31_link.returncode} islink={os.path.islink(legacy_parties)} stderr={p31_link.stderr}")
-check("T31", "legacy symlink migration preserves registered parties",
-      "legacy_bot" in docket_lib.parties(legacy_store),
-      str(docket_lib.parties(legacy_store)))
-with open(legacy_target, encoding="utf-8") as f:
-    legacy_target_after = f.read()
-check("T31", "legacy symlink migration does not modify its old target",
-      "legacy_bot" in legacy_target_after, legacy_target_after)
+try:
+    os.symlink(legacy_target, legacy_parties)
+except OSError as symlink_error:
+    # Creating symlinks may require Developer Mode or elevation on Windows.
+    # Linux/macOS CI still executes the migration assertions themselves.
+    check("T31", "legacy symlink migration is tested where symlinks are available",
+          os.name == "nt", str(symlink_error))
+else:
+    p31_link = subprocess.run(
+        [sys.executable, os.path.join(D, "tools", "docket-init"), d31_link, "--force"],
+        capture_output=True, text=True)
+    check("T31", "--force materializes a legacy PARTIES.md symlink",
+          p31_link.returncode == 0 and os.path.isfile(legacy_parties) and
+          not os.path.islink(legacy_parties),
+          f"exit={p31_link.returncode} islink={os.path.islink(legacy_parties)} stderr={p31_link.stderr}")
+    check("T31", "legacy symlink migration preserves registered parties",
+          "legacy_bot" in docket_lib.parties(legacy_store),
+          str(docket_lib.parties(legacy_store)))
+    with open(legacy_target, encoding="utf-8") as f:
+        legacy_target_after = f.read()
+    check("T31", "legacy symlink migration does not modify its old target",
+          "legacy_bot" in legacy_target_after, legacy_target_after)
 
 for p in (d31_regular, d31_link):
     shutil.rmtree(p)
@@ -1234,7 +1253,7 @@ for p in (d31_regular, d31_link):
 # ---- T32: docket-init has one canonical store layout (r044) ----
 d32_removed = tempfile.mkdtemp(prefix="dk-r44-removed-")
 p32_removed = subprocess.run(
-    ["python3", os.path.join(D, "tools", "docket-init"),
+    [sys.executable, os.path.join(D, "tools", "docket-init"),
      d32_removed, "--store", "custom"],
     capture_output=True, text=True)
 removed_message = (
@@ -1251,7 +1270,7 @@ check("T32", "a rejected custom store request creates no store",
 
 d32_standard = tempfile.mkdtemp(prefix="dk-r44-standard-")
 p32_standard = subprocess.run(
-    ["python3", os.path.join(D, "tools", "docket-init"), d32_standard],
+    [sys.executable, os.path.join(D, "tools", "docket-init"), d32_standard],
     capture_output=True, text=True)
 standard_store = os.path.join(d32_standard, "docket")
 standard_assets = (".seq", "PROTOCOL.md", "PARTIES.md", "INDEX.md", "README.md")
@@ -1263,6 +1282,21 @@ check("T32", "standard initialization creates every canonical store asset",
 
 for p in (d32_removed, d32_standard):
     shutil.rmtree(p)
+
+# ---- T33: Windows paths and CRLF preserve protocol meaning (r047) ----
+check("T33", "a Windows drive colon is not mistaken for a refs line number",
+      docket_lib.parse_ref("C:/src/app.py") == ("C:/src/app.py", None),
+      str(docket_lib.parse_ref("C:/src/app.py")))
+check("T33", "a trailing line number splits after the Windows path",
+      docket_lib.parse_ref("C:/src/app.py:42") == ("C:/src/app.py", 42),
+      str(docket_lib.parse_ref("C:/src/app.py:42")))
+d33 = tempfile.mkdtemp(prefix="dk-r47-crlf-")
+crlf_path = os.path.join(d33, "filing.md")
+with open(crlf_path, "wb") as f:
+    f.write(b"---\r\nprotocol: docket/0.3\r\n---\r\nbody\r\n")
+check("T33", "protocol reads normalize CRLF to LF",
+      "\r" not in docket_lib.read(crlf_path), repr(docket_lib.read(crlf_path)))
+shutil.rmtree(d33)
 
 # ---- report ----
 w = max(len(r[1]) for r in results)
