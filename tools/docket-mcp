@@ -12,8 +12,8 @@ Identity comes from DOCKET_PARTY, set once when the server is registered. There
 is no `from` argument on any tool, so a model cannot claim to be another party.
 
 Registration:
-  qwen   mcp add docket python3 /path/to/tools/docket-mcp -e DOCKET_PARTY=qwen   -e DOCKET_STORE=docket --trust
-  claude mcp add docket -e DOCKET_PARTY=claude -e DOCKET_STORE=docket -- python3 /path/to/tools/docket-mcp
+  qwen   mcp add docket python3 /path/to/tools/docket-mcp -e DOCKET_PARTY=qwen --trust
+  claude mcp add docket -e DOCKET_PARTY=claude -- python3 /path/to/tools/docket-mcp
 """
 import sys, os, json, subprocess
 

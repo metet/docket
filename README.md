@@ -71,9 +71,10 @@ A Docket store is just the `docket/` directory inside a project. It contains
 docket filings. It is not a remote service, database, account, or shared global
 directory.
 
-Use the default name `docket/`. Custom store names are not needed for ordinary
-projects and are not part of the recommended setup while their discovery and Git
-hook behavior is under review.
+The initialized store name is always `docket/`. `docket-init --store` was removed
+because a custom directory could bypass the installed Git hooks. Low-level
+environment overrides remain for test fixtures and legacy workspace discovery,
+but are not part of normal installation.
 
 ---
 
@@ -89,7 +90,7 @@ Docket includes a zero-dependency reference toolchain in `tools/`:
 | **`tools/docket-init`** | Scaffold a new Docket store in any code repository (supports `--link` symlink mode). |
 | **`tools/docket-index`** | Regenerate `docket/INDEX.md` turn-tracker and status tables from filings. |
 | **`tools/docket-lint`** | Validate schema, front matter, and state-machine legality across a store. |
-| **`tools/docket-test`** | Self-contained regression test suite (150 automated behavioral checks). |
+| **`tools/docket-test`** | Self-contained regression test suite (154 automated behavioral checks). |
 | **`tools/docket-commit`** | Commit as a named party: sets the git author for that one invocation and records a `Docket-Party:` trailer. |
 | **`tools/git-hooks/`** | Tracked git hooks. `pre-commit` runs the lint and the suite; `commit-msg` refuses a commit whose declared party contradicts the filings it carries. Opt in per clone with `git config core.hooksPath tools/git-hooks`. |
 
@@ -97,7 +98,7 @@ Docket includes a zero-dependency reference toolchain in `tools/`:
 
 ```bash
 python3 tools/docket-lint    # schema and state-machine legality
-python3 tools/docket-test    # 150 behavioural checks
+python3 tools/docket-test    # 154 behavioural checks
 ```
 
 To have git run both before every commit, once per clone:
@@ -170,7 +171,7 @@ Until the packaged MCP release is published, configure clients to launch
 install a similarly named third-party package and assume it is this project.
 
 ### Automatic Store Resolution
-When `DOCKET_STORE="docket"` (relative), the MCP server automatically checks if the agent's current working directory matches an approved workspace in `~/.config/docket/workspaces`. If matched, it routes all tool calls to `<workspace>/docket/`.
+The MCP server checks whether the agent's current working directory matches an approved workspace in `~/.config/docket/workspaces`. If matched, it routes all tool calls to `<workspace>/docket/`.
 
 ### Automatic Cross-Workspace Turn Detection
 Even when an agent is running inside a specific repository, `docket_list` automatically checks all other trusted workspaces registered in `~/.config/docket/workspaces`. If there is any open docket waiting on that agent in another project, `docket_list` surfaces it:
@@ -195,7 +196,7 @@ Agents can query open work across all approved projects at once by setting `work
 ### Registration Examples
 * **Claude Code:**
   ```bash
-  claude mcp add docket -e DOCKET_PARTY=claude -e DOCKET_STORE=docket -- python3 /path/to/tools/docket-mcp
+  claude mcp add docket -e DOCKET_PARTY=claude -- python3 /path/to/tools/docket-mcp
   ```
 * **Qwen Code (`~/.qwen/settings.json`):**
   ```json
@@ -214,8 +215,7 @@ Agents can query open work across all approved projects at once by setting `work
       "command": "python3",
       "args": ["/path/to/tools/docket-mcp"],
       "env": {
-        "DOCKET_PARTY": "qwen",
-        "DOCKET_STORE": "docket"
+        "DOCKET_PARTY": "qwen"
       },
       "trust": true
     }

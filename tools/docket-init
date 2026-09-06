@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scaffold a Docket store in another repository.
 
-  docket-init [TARGET] [--store docket] [--link] [--force]
+  docket-init [TARGET] [--link] [--force]
 
 Creates the store, copies (or links) the protocol, registry and tools, and
 points each agent CLI's context file at them. Safe to re-run: existing files are
@@ -128,14 +128,17 @@ def splice(path, body):
 def main():
     ap = argparse.ArgumentParser(prog="docket-init")
     ap.add_argument("target", nargs="?", default=".", help="repository to set up (default: .)")
-    ap.add_argument("--store", default="docket", help="store directory name (default: docket)")
     ap.add_argument("--link", action="store_true",
                     help="reference the source repo instead of copying protocol/registry/tools")
     ap.add_argument("--force", action="store_true", help="overwrite files that already exist")
+    if "--store" in sys.argv[1:] or any(
+            arg.startswith("--store=") for arg in sys.argv[1:]):
+        ap.error("--store is removed; Docket uses the canonical 'docket/' store directory.")
     a = ap.parse_args()
 
     target = os.path.abspath(a.target)
-    store  = os.path.join(target, a.store)
+    store_name = "docket"
+    store = os.path.join(target, store_name)
     if not os.path.isdir(target):
         sys.exit(f"docket-init: no such directory: {target}")
     if os.path.abspath(SOURCE) == target:
@@ -143,28 +146,28 @@ def main():
 
     made = []
     os.makedirs(os.path.join(store, ".seq"), exist_ok=True)
-    made.append(f"{a.store}/.seq/")
+    made.append(f"{store_name}/.seq/")
 
     # PROTOCOL.md: universal specification. Copied or linked.
     proto_dst = os.path.join(store, "PROTOCOL.md")
     if (os.path.exists(proto_dst) or os.path.islink(proto_dst)) and not a.force:
-        made.append(f"{a.store}/PROTOCOL.md (exists, kept)")
+        made.append(f"{store_name}/PROTOCOL.md (exists, kept)")
     else:
         if os.path.islink(proto_dst) or os.path.exists(proto_dst):
             os.remove(proto_dst)
         proto_src = os.path.join(SOURCE, "PROTOCOL.md")
         if not a.link:
             shutil.copy2(proto_src, proto_dst)
-            made.append(f"{a.store}/PROTOCOL.md")
+            made.append(f"{store_name}/PROTOCOL.md")
         else:
             try:
                 # Absolute, like the README path below: the two repos are unrelated
                 # trees, so a relative link is wrong the moment either one moves.
                 os.symlink(proto_src, proto_dst)
-                made.append(f"{a.store}/PROTOCOL.md -> {proto_src}")
+                made.append(f"{store_name}/PROTOCOL.md -> {proto_src}")
             except OSError as e:
                 shutil.copy2(proto_src, proto_dst)
-                made.append(f"{a.store}/PROTOCOL.md (copied, symlink failed: {e.strerror})")
+                made.append(f"{store_name}/PROTOCOL.md (copied, symlink failed: {e.strerror})")
 
     # PARTIES.md: per-store participant registry. Always local in both modes
     # (never symlinked to source and never copied from the source repo's live
@@ -192,13 +195,13 @@ def main():
         finally:
             if tmp_name and os.path.exists(tmp_name):
                 os.unlink(tmp_name)
-        made.append(f"{a.store}/PARTIES.md (legacy symlink materialized, kept)")
+        made.append(f"{store_name}/PARTIES.md (legacy symlink materialized, kept)")
     elif os.path.exists(parties_dst):
-        made.append(f"{a.store}/PARTIES.md (exists, kept)")
+        made.append(f"{store_name}/PARTIES.md (exists, kept)")
     else:
         with open(parties_dst, "w", encoding="utf-8") as f:
             f.write(parties_template())
-        made.append(f"{a.store}/PARTIES.md")
+        made.append(f"{store_name}/PARTIES.md")
 
     if not a.link:
         tdst = os.path.join(target, "tools")
@@ -247,13 +250,13 @@ the index or an existing filing.
 Scaffolded by `docket-init` from {version()} on {datetime.date.today().isoformat()}.
 {"Protocol and tools are copies; re-run docket-init --force to refresh them (preserves local PARTIES.md)." if not a.link else ""}
 """)
-        made.append(f"{a.store}/README.md")
+        made.append(f"{store_name}/README.md")
 
     # AGENTS.md carries the block: Codex, Gemini CLI and Qwen Code all read it.
     # CLAUDE.md only points at it, so Claude Code is covered without charging
     # Qwen Code for a second copy. Both are delimited, so a re-run migrates an
     # older store that had the full block in each.
-    made.append(f"AGENTS.md ({splice(os.path.join(target, 'AGENTS.md'), block(a.store, a.link, SOURCE))})")
+    made.append(f"AGENTS.md ({splice(os.path.join(target, 'AGENTS.md'), block(store_name, a.link, SOURCE))})")
     made.append(f"CLAUDE.md ({splice(os.path.join(target, 'CLAUDE.md'), pointer())})")
 
     idx = os.path.join(store, "INDEX.md")
@@ -261,21 +264,21 @@ Scaffolded by `docket-init` from {version()} on {datetime.date.today().isoformat
         open(idx, "w", encoding="utf-8").write(
             "# Index\n\n*Generated by `tools/docket-index`. Do not edit.*\n\n"
             "## Open (0)\n\n*None yet.*\n")
-        made.append(f"{a.store}/INDEX.md")
+        made.append(f"{store_name}/INDEX.md")
 
     print(f"Initialised Docket {version()} in {target}\n")
     for m in made:
         print(f"  {m}")
-    parties_path = f"{a.store}/PARTIES.md"
+    parties_path = f"{store_name}/PARTIES.md"
     tool = f"{SOURCE}/tools/docket-new" if a.link else "tools/docket-new"
     hooks = f"{SOURCE}/tools/git-hooks" if a.link else "tools/git-hooks"
     print(f"""
 Next:
   1. Edit {parties_path} so it lists the parties for THIS repository.
-  2. Pre-authorise writes to {a.store}/ for each CLI, or every filing prompts.
+  2. Pre-authorise writes to {store_name}/ for each CLI, or every filing prompts.
      Qwen Code: .qwen/settings.json -> {{"tools": {{"approvalMode": "auto_edit"}}}}
   3. File the first docket:
-     {tool} request --from <you> --slug <slug> --title "..." --store {a.store}
+     {tool} request --from <you> --slug <slug> --title "..."
   4. Gate the store, if this repo uses git:
      git config core.hooksPath {hooks}
      Nothing stops a party writing a filing by hand, and a hand-written one is

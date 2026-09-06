@@ -1231,6 +1231,39 @@ check("T31", "legacy symlink migration does not modify its old target",
 for p in (d31_regular, d31_link):
     shutil.rmtree(p)
 
+# ---- T32: docket-init has one canonical store layout (r044) ----
+d32_removed = tempfile.mkdtemp(prefix="dk-r44-removed-")
+p32_removed = subprocess.run(
+    ["python3", os.path.join(D, "tools", "docket-init"),
+     d32_removed, "--store", "custom"],
+    capture_output=True, text=True)
+removed_message = (
+    "docket-init: error: --store is removed; Docket uses the canonical "
+    "'docket/' store directory.")
+check("T32", "docket-init rejects the removed --store option",
+      p32_removed.returncode != 0, f"exit={p32_removed.returncode}")
+check("T32", "the removed option has an actionable diagnostic",
+      removed_message in p32_removed.stderr, p32_removed.stderr)
+check("T32", "a rejected custom store request creates no store",
+      not os.path.exists(os.path.join(d32_removed, "custom")) and
+      not os.path.exists(os.path.join(d32_removed, "docket")),
+      str(os.listdir(d32_removed)))
+
+d32_standard = tempfile.mkdtemp(prefix="dk-r44-standard-")
+p32_standard = subprocess.run(
+    ["python3", os.path.join(D, "tools", "docket-init"), d32_standard],
+    capture_output=True, text=True)
+standard_store = os.path.join(d32_standard, "docket")
+standard_assets = (".seq", "PROTOCOL.md", "PARTIES.md", "INDEX.md", "README.md")
+check("T32", "standard initialization creates every canonical store asset",
+      p32_standard.returncode == 0 and
+      all(os.path.exists(os.path.join(standard_store, p)) for p in standard_assets),
+      f"exit={p32_standard.returncode} contents="
+      f"{os.listdir(standard_store) if os.path.isdir(standard_store) else []}")
+
+for p in (d32_removed, d32_standard):
+    shutil.rmtree(p)
+
 # ---- report ----
 w = max(len(r[1]) for r in results)
 fails = 0
