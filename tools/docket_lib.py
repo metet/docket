@@ -539,10 +539,17 @@ def save_workspaces(paths):
 
 def match_workspace(target_path):
     """Find the configured workspace that contains target_path (if any)."""
-    target = os.path.abspath(os.path.expanduser(target_path))
+    # macOS exposes /var through /private/var, and Windows paths are
+    # case-insensitive. Compare canonical keys so the same directory cannot
+    # fail allowlist matching merely because the client used another spelling.
+    target = os.path.realpath(os.path.abspath(os.path.expanduser(target_path)))
+    target_key = os.path.normcase(target)
     best_match = None
-    for ws in load_workspaces():
-        if target == ws or target.startswith(ws + os.sep):
+    for configured in load_workspaces():
+        ws = os.path.realpath(configured)
+        ws_key = os.path.normcase(ws)
+        prefix = ws_key if ws_key.endswith(os.sep) else ws_key + os.sep
+        if target_key == ws_key or target_key.startswith(prefix):
             if best_match is None or len(ws) > len(best_match):
                 best_match = ws
     return best_match

@@ -9,7 +9,7 @@ showed up in what actually got written to a filing.
 
   python3 tools/docket-test        # exits 1 if anything fails
 """
-import os, sys, json, shutil, subprocess, tempfile
+import os, sys, json, shutil, stat, subprocess, tempfile
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -39,6 +39,13 @@ def fresh():
 def check(tid, desc, cond, detail=""):
     results.append((tid, desc, bool(cond), detail))
 
+def remove_tree(path):
+    """Remove test fixtures even when Git made object files read-only on Windows."""
+    def make_writable(func, failing_path, _exc_info):
+        os.chmod(failing_path, os.stat(failing_path).st_mode | stat.S_IWRITE)
+        func(failing_path)
+    shutil.rmtree(path, onerror=make_writable)
+
 # ---- T1: non-object JSON must not kill the server ----
 rc, out, _ = server([INIT, "[1,2,3]", {"jsonrpc":"2.0","id":3,"method":"ping"}])
 check("T1", "survives a JSON array", rc == 0 and any(m.get("id") == 3 for m in out),
@@ -60,7 +67,7 @@ def listing(party):
 check("T3", "unset party claims nothing", "waiting on you" not in listing(""), listing("").replace("\n","|"))
 check("T3", "substring party claims nothing", "waiting on you" not in listing("qwe"), listing("qwe").replace("\n","|"))
 check("T3", "exact party still claimed", "waiting on you" in listing("qwen"), listing("qwen").replace("\n","|"))
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T4: list arguments ----
 d = fresh()
@@ -70,7 +77,7 @@ server([INIT, tc("docket_file", {"docket":"r001","title":"A","body":"b","act":"a
 ev = [l for l in open(os.path.join(d,"docket","r001-q","001-qwen-answer.md")).read().splitlines()
       if l.startswith("evidence:")]
 check("T4", "list evidence serialised cleanly", ev == ["evidence: [git:58f22c6, pytest passing]"], str(ev))
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T5: docket_file schema exposes assignee, and no longer `to` ----
 _, out, _ = server([INIT, {"jsonrpc":"2.0","id":4,"method":"tools/list"}])
@@ -115,7 +122,7 @@ if "erratum" in acts:
     check("T7", "docket_read flags the correction",
           "git:bbb" in body and "corrected by a later erratum" in body,
           "no correction note" if "corrected by a later erratum" not in body else "missing new value")
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T8: docket_open can keep a report open ----
 d = fresh()
@@ -126,7 +133,7 @@ st = [l for l in open(os.path.join(d,"docket","r001-r","000-request.md")).read()
 check("T8", "report can be opened as status=open", st == ["status: open"], str(st))
 oprops = tools["docket_open"]["inputSchema"]["properties"]
 check("T8", "docket_open advertises status", "status" in oprops, str(sorted(oprops)))
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T10: a value containing a comma survives the round trip ----
 EV = "docket-lint: 14 filings, 0 errors"
@@ -142,7 +149,7 @@ check("T10", "comma inside a list item survives", got == [EV, "git:aaa"], str(go
 lint = subprocess.run([sys.executable, os.path.join(D,"tools","docket-lint"), "docket"],
                       capture_output=True, text=True, cwd=d)
 check("T10", "store still lints clean", lint.returncode == 0, lint.stdout.strip().splitlines()[-1])
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T11: a missing required argument names itself ----
 d = fresh()
@@ -154,7 +161,7 @@ _, out, _ = server([INIT, tc("docket_read", {})], party="qwen", cwd=d)
 msg = out[-1]["result"]["content"][0]["text"]
 check("T11", "docket_read names its missing argument",
       "docket" in msg and "KeyError" not in msg, msg[:90])
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T9: tool annotations ----
 READERS = {"docket_list", "docket_read", "docket_protocol"}
@@ -206,7 +213,7 @@ import importlib, docket_lib; importlib.reload(docket_lib)
 acts = {f["fm"].get("id"): f["fm"].get("act")
         for f in docket_lib.apply_errata(docket_lib.load(os.path.join(d,"docket","r001-q")))}
 check("T12", "the target keeps its own act", acts.get("r001/001-qwen") == "answer", str(acts))
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T13: blocked_on routing decided by registry membership ----
 d = fresh()
@@ -224,7 +231,7 @@ def blocked(slug, on):
 check("T13", "external condition routes to nobody", blocked("x","upstream CI is red") is None,
       repr(blocked.__name__))
 check("T13", "blocked on a party routes to it", blocked("y","codex") == "codex", "")
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T14: the store resolves through MCP roots ----
 _empty_ws_dir = tempfile.mkdtemp(prefix="dk-nows-")
@@ -280,7 +287,7 @@ check("T14", "survives a client that refuses roots", is_err and "no docket store
 # a working relative store must not pay for a round trip
 asked, out, is_err = roots_session({"roots":{}}, None, cwd=d)
 check("T14", "no roots round trip when cwd already works", not asked and not is_err, out[:60])
-shutil.rmtree(d); shutil.rmtree(outside); shutil.rmtree(_empty_ws_dir)
+remove_tree(d); remove_tree(outside); remove_tree(_empty_ws_dir)
 
 # ---- T15: workspace allowlist resolution and CLI ----
 d1 = fresh()
@@ -316,7 +323,7 @@ out_all = json.loads(pr_all.stdout)
 check("T15", "docket_list workspace=all runs without error",
       not out_all["result"]["isError"], str(out_all)[:80])
 
-shutil.rmtree(d1); shutil.rmtree(d2); shutil.rmtree(outside)
+remove_tree(d1); remove_tree(d2); remove_tree(outside)
 
 # ---- T17: a client outside a store can still reach dockets by id (r007) ----
 # The id names exactly one store, so these calls were never ambiguous; the old
@@ -364,7 +371,7 @@ check("T17", "the refusal names the trusted workspaces",
 is_err, out = outside_call("docket_read", {"docket": "r999"})
 check("T17", "an unresolvable id says where it looked",
       is_err and "searched" in out, out[:80])
-shutil.rmtree(d1); shutil.rmtree(outside)
+remove_tree(d1); remove_tree(outside)
 
 # ---- T16: initialize carries standing guidance ----
 # The rules below cannot be enforced by a schema, so the only place they can
@@ -428,7 +435,7 @@ main, _, sections = listing.partition("\n\n")
 check("T18", "another party's work is listed but never claimed",
       "r003-active" in main and "r003-active" not in sections,
       f"main={('r003-active' in main)} sections={('r003-active' in sections)}")
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T19: a filing may say only what it knows about its date (r010) ----
 # Canonical order is (NNN, party) and does not use `date`, so the timestamp is
@@ -467,7 +474,7 @@ rc, out = lint_of("001-claude.md", "2026-08-29")
 check("T19", "an ambiguous filename is still rejected", rc != 0, out[:80])
 check("T19", "the filename error names the file it should have been",
       "001-claude-answer.md" in out, out[:160])
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T20: the gate blames the commit, not the store (r011) ----
 # An invalid filing cannot be repaired -- errata cannot correct a filename and
@@ -514,7 +521,7 @@ r = lint("--gate", orph)
 check("T20", "a docket-level fault gates any filing in that docket",
       r.returncode == 1 and "no 000-request" in r.stdout,
       r.stdout.strip().splitlines()[-1])
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T21: the reader discloses validity (r009) ----
 d = fresh()
@@ -575,7 +582,7 @@ closed = out_c[-1]["result"]["content"][0]["text"]
 check("T21", "a scar in a closed docket is still reported",
       "closed docket" in closed and "001-claude.md" in closed,
       closed.replace("\n", "|")[:140])
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T22: git attribution matches the filings a commit carries (r013) ----
 # Every party is the same OS user pushing the same key, so none of this
@@ -687,7 +694,7 @@ stage(d, "README.md")
 r = commit(d, None, "tooling only")
 check("T22", "a commit with no filings is not policed",
       r.returncode == 0 and "commit-msg:" not in r.stderr, r.stderr[:120])
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T22 (r032): a request's author is in its front matter, not its filename ----
 # 000-request.md carries no party in its path, so before r032 staged_parties saw
@@ -781,7 +788,7 @@ finally:
 check("T22", "an unreadable request yields no author, so it cannot cause a mismatch",
       _author is None, repr(_author))
 reset(d)
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T23: waiting_on survives a handoff to a third party (r014) ----
 # The rule until r014 keyed on "was the last filer the requester", which is
@@ -853,7 +860,7 @@ dn2("filing", docket="r002", **{"from": "codex", "act": "answer",
                                 "body": "b"})
 check("T23", "relinquishing does not leave the docket routed to the leaver",
       route(st_, "r002-u") == (None, "qwen"), str(route(st_, "r002-u")))
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T24: a 0.2 filing carrying `to` survives the 0.3 removal (r015) ----
 # Filings are immutable, so 35 of them keep a field the schema no longer defines.
@@ -914,7 +921,7 @@ check("T24", "docket-new no longer accepts --to",
       dn2("filing", docket="r001", **{"from": "qwen", "act": "answer", "title": "T",
                                       "body": "b", "to": "claude"}).returncode != 0,
       "--to was accepted")
-shutil.rmtree(d)
+remove_tree(d)
 
 # ---- T25: docket_open can name a trusted workspace, and only a trusted one (r018) ----
 # The defect: no_store_msg told the caller to "pick one deliberately" and
@@ -1012,7 +1019,7 @@ check("T25", "a slash in slug is not parsed as a workspace",
       not any(x == "mindmap" for x in filed_slugs(d_a)), str(filed_slugs(d_a)))
 
 for x in (d_a, d_b, coll, bare, unreg, outside):
-    shutil.rmtree(x)
+    remove_tree(x)
 
 # ---- T26: the three version axes stay independent (r019) ----
 # serverInfo is MCP implementation metadata, not the filing format. Deriving one
@@ -1078,7 +1085,7 @@ check("T27", "a workspace registered after the first miss is picked up in-proces
 check("T27", "and the filing really lands in that store",
       any("after-register" in x for x in os.listdir(os.path.join(late, "docket"))),
       str(os.listdir(os.path.join(late, "docket"))))
-shutil.rmtree(late)
+remove_tree(late)
 
 # ---- T28: a failed reindex warns inside a successful filing (r021) ----
 # Reporting isError here would invite a retry, and the retry writes a second
@@ -1109,7 +1116,7 @@ check("T28", "it names the repair command, not just the failure",
 check("T28", "exactly one filing was written, so no retry duplicates it",
       len([x for x in os.listdir(st28) if x.startswith("r001")]) == 1,
       str(os.listdir(st28)))
-shutil.rmtree(d28)
+remove_tree(d28)
 
 # ---- T29: docket-init copies git-hooks and docket-commit (r033) ----
 d29 = tempfile.mkdtemp(prefix="dk-init-")
@@ -1142,7 +1149,7 @@ cp_fail = subprocess.run(["git", "-C", d29, "commit", "-m", "test: invalid filin
 check("T29", "core.hooksPath blocks invalid filing in downstream repo",
       cp_fail.returncode != 0 and "pre-commit: docket-lint failed" in cp_fail.stderr,
       f"exit={cp_fail.returncode} stdout={cp_fail.stdout} stderr={cp_fail.stderr}")
-shutil.rmtree(d29)
+remove_tree(d29)
 
 # ---- T30: docket-init provisions minimal local registry (r036) ----
 import docket_lib
@@ -1191,7 +1198,7 @@ check("T30", "editing project 1 does not leak localbot into source store",
       str(docket_lib.parties(os.path.join(D, "docket"))))
 
 for p in (d30_copy, d30_l1, d30_l2):
-    shutil.rmtree(p)
+    remove_tree(p)
 
 # ---- T31: docket-init refresh preserves and localises PARTIES.md (r043) ----
 d31_regular = tempfile.mkdtemp(prefix="dk-r43-regular-")
@@ -1248,7 +1255,7 @@ else:
           "legacy_bot" in legacy_target_after, legacy_target_after)
 
 for p in (d31_regular, d31_link):
-    shutil.rmtree(p)
+    remove_tree(p)
 
 # ---- T32: docket-init has one canonical store layout (r044) ----
 d32_removed = tempfile.mkdtemp(prefix="dk-r44-removed-")
@@ -1281,7 +1288,7 @@ check("T32", "standard initialization creates every canonical store asset",
       f"{os.listdir(standard_store) if os.path.isdir(standard_store) else []}")
 
 for p in (d32_removed, d32_standard):
-    shutil.rmtree(p)
+    remove_tree(p)
 
 # ---- T33: Windows paths and CRLF preserve protocol meaning (r047) ----
 check("T33", "a Windows drive colon is not mistaken for a refs line number",
@@ -1296,7 +1303,7 @@ with open(crlf_path, "wb") as f:
     f.write(b"---\r\nprotocol: docket/0.3\r\n---\r\nbody\r\n")
 check("T33", "protocol reads normalize CRLF to LF",
       "\r" not in docket_lib.read(crlf_path), repr(docket_lib.read(crlf_path)))
-shutil.rmtree(d33)
+remove_tree(d33)
 
 # ---- report ----
 w = max(len(r[1]) for r in results)
