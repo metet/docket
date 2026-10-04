@@ -937,7 +937,6 @@ remove_tree(d)
 # The defect: no_store_msg told the caller to "pick one deliberately" and
 # docket_open had no parameter to pick with, so the one tool that reaches that
 # message was the one tool that could not act on it.
-import time
 d_a   = fresh()                                   # a workspace with a store
 d_b   = fresh()                                   # a second one, for the override
 coll  = tempfile.mkdtemp(prefix="dk-coll-")       # two workspaces, one basename

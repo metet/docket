@@ -643,7 +643,7 @@ def render_listing(entries, empty, extra=(), scars=()):
 
 
 def call(name, args):
-    from docket_lib import dockets, validate_docket, load, read, apply_errata
+    from docket_lib import validate_docket, read
     miss = missing_required(name, args)
     if miss:
         return text(f"{name}: missing required argument"
@@ -664,7 +664,8 @@ def call(name, args):
     # that search ran, so docket_read and both writers failed from a session
     # started outside a store even though the docket was reachable (r007).
     if name in ("docket_read", "docket_file", "docket_close"):
-        if not find_docket_store(args["docket"])[0]:
+        found_st, found_d = find_docket_store(args["docket"])
+        if not found_st:
             return text(unresolved_docket_msg(args["docket"]), True)
     # What a party owes is the one question the store must always be able to
     # answer, so an unlocatable local store degrades to every trusted workspace
@@ -700,32 +701,28 @@ def call(name, args):
                                    extra=((other, "yours in other trusted workspaces"),),
                                    scars=scars))
     if name == "docket_read":
-        did = args["docket"].split("-")[0]
-        found_st, found_d = find_docket_store(args["docket"])
-        if found_st and found_d:
-            # validate_docket already applies errata, so this is the same filing
-            # list the old load()/apply_errata() pair produced -- with the
-            # validity the reader used to throw away.
-            filings, invalid, errors, warnings, _ = validate_docket(found_st, found_d)
-            per_err, docket_errs = attribute(found_d, filings, errors)
-            per_warn, docket_warns = attribute(found_d, filings, warnings)
-            out = []
-            for f in filings:
-                block = f"=== {f['fn']} ===\n{f['text']}"
-                if f.get("corrected"):
-                    block += "\n> corrected by a later erratum:\n" + "\n".join(
-                        f">   {k}: {f['fm'].get(k, '(retracted)')}"
-                        for k in sorted(f["corrected"]))
-                block += annotate(f["fn"], invalid,
-                                  per_err.get(f["fn"], []), per_warn.get(f["fn"], []))
-                out.append(block)
-            body = "\n\n".join(out)
-            if docket_errs or docket_warns:
-                body += ("\n\n=== this docket ===\n"
-                         + "".join(f"> ERROR: {m}\n" for m in docket_errs)
-                         + "".join(f"> warn:  {m}\n" for m in docket_warns))
-            return text(body)
-        return text(f"no docket {did} in current or trusted workspaces", True)
+        # validate_docket already applies errata, so this is the same filing
+        # list the old load()/apply_errata() pair produced -- with the
+        # validity the reader used to throw away.
+        filings, invalid, errors, warnings, _ = validate_docket(found_st, found_d)
+        per_err, docket_errs = attribute(found_d, filings, errors)
+        per_warn, docket_warns = attribute(found_d, filings, warnings)
+        out = []
+        for f in filings:
+            block = f"=== {f['fn']} ===\n{f['text']}"
+            if f.get("corrected"):
+                block += "\n> corrected by a later erratum:\n" + "\n".join(
+                    f">   {k}: {f['fm'].get(k, '(retracted)')}"
+                    for k in sorted(f["corrected"]))
+            block += annotate(f["fn"], invalid,
+                              per_err.get(f["fn"], []), per_warn.get(f["fn"], []))
+            out.append(block)
+        body = "\n\n".join(out)
+        if docket_errs or docket_warns:
+            body += ("\n\n=== this docket ===\n"
+                     + "".join(f"> ERROR: {m}\n" for m in docket_errs)
+                     + "".join(f"> warn:  {m}\n" for m in docket_warns))
+        return text(body)
     if name == "docket_protocol":
         for cand in (os.path.join(store(), "PROTOCOL.md"), os.path.join(HERE, "..", "PROTOCOL.md")):
             if os.path.exists(cand):

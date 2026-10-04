@@ -65,7 +65,7 @@ def cmd_remove(args):
         save_workspaces(current)
         print(f"\nConfig saved to {workspaces_config_path()}")
 
-def cmd_list(args):
+def cmd_list(_args):
     cfg = workspaces_config_path()
     ws_list = load_workspaces()
     print(f"Config: {cfg}")
@@ -99,7 +99,7 @@ def cmd_list(args):
         turn_str = f"waiting on {', '.join(waiting_on)}" if waiting_on else "all clear"
         print(f"  ✓ {ws}  [{open_count} open, {turn_str}]")
 
-def cmd_status(args):
+def cmd_status(_args):
     ws_list = load_workspaces()
     if not ws_list:
         print("No workspaces configured in", workspaces_config_path())

@@ -5,7 +5,7 @@ All validity logic lives in docket_lib.validate_docket, which docket-index also
 calls, so the two tools cannot disagree about what is valid."""
 import os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from docket_lib import parties, dockets, validate_docket
+from docket_lib import parties, validate_docket
 
 def main(store, gate=None):
     """Validate a store. With `gate` set, report everything but fail only on
@@ -31,7 +31,7 @@ def main(store, gate=None):
         if not os.path.isdir(os.path.join(store, d)) or d == ".seq": continue
         if not re.match(r"^r\d{3}(-[a-z0-9-]+)?$", d):
             errors.append(f"{d}: directory must match r<NNN>-<slug>"); continue
-        filings, invalid, errs, warns, _ = validate_docket(store, d, known)
+        filings, _invalid, errs, warns, _ = validate_docket(store, d, known)
         n += len(filings); errors += errs; warnings += warns
     for x in warnings: print(f"warn:  {x}")
     for e in errors:   print(f"ERROR: {e}")

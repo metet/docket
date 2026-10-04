@@ -104,7 +104,7 @@ def as_list(v):
     if not v: return []
     if v.startswith("[") and v.endswith("]"):
         return [scalar(x) for x in split_flow(v[1:-1]) if x.strip()]
-    return [v] if v else []
+    return [v]
 
 def front_matter(text):
     """Returns a dict, or None if absent. Raises ValueError on YAML we do not

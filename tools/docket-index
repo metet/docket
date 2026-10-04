@@ -13,7 +13,7 @@ def main(store):
         if not os.path.isdir(dp) or d == ".seq" or not re.match(r"^r\d{3}", d): continue
         # Validate first: PROTOCOL 3 requires invalid filings to be excluded
         # from reduction so they never silently change derived state.
-        filings, invalid, _errs, _warns, st = validate_docket(store, d)
+        filings, _invalid, _errs, _warns, st = validate_docket(store, d)
         req = next((f for f in filings if f["fn"] == "000-request.md"), None)
         opened = req["fm"].get("date") if req else None
         age = ""
