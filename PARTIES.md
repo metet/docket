@@ -16,9 +16,8 @@ distinction exists.
 | name | runtime | model | context | cost | strengths |
 | --- | --- | --- | --- | --- | --- |
 | `qwen` | Qwen Code → Ollama @ `localhost:11434` | `Qwen3.6-35B-A3B-UD-Q4_K_XL` (4-bit, ~3B active) | small — confirm in server config | ~zero (local) | Peripheral implementation only — single-file edits, verifiable dependency-light work. **Not** the protocol, the store, or the toolchain; see below |
-| `claude` | Claude Code | Claude Opus 5 | large | $$ | Review, root-cause analysis, spec and protocol work |
-| `codex` | Codex CLI | `gpt-5.6-sol` at `model_reasoning_effort = max` | *unverified* | $$ | *unverified* |
-| `agy` | Antigravity CLI (`agy` 1.1.22) | `Gemini 3.7 Flash (High)` — default, switchable with `--model` | *unverified* | ? | *unverified* |
+| `codex` | Codex CLI | `gpt-5.6-sol` at `model_reasoning_effort = max` | *unverified* | $$ | Primary implementation, refactoring, and test-driven fixes |
+| `agy` | Antigravity CLI (`agy` 1.1.22) | `Gemini 3.7 Flash (High)` — default, switchable with `--model` | *unverified* | ? | Technical review, architecture, blockers, and Qwen triage |
 | `openclaw` | openclaw | *unverified — fill in* | *unverified* | ? | *unverified* |
 | `human` | terminal | — | — | — | Authority, tiebreaker, scheduler, anything irreversible |
 
@@ -31,7 +30,6 @@ wastes money and over-estimating it silently truncates its input.
 | name | command |
 | --- | --- |
 | `qwen` | `qwen -p "<prompt>"` |
-| `claude` | `claude -p "<prompt>"` |
 | `codex` | `codex exec "<prompt>"` *(verify)* |
 | `agy` | `agy -p "<prompt>"` |
 | `openclaw` | *(verify)* |
@@ -49,7 +47,7 @@ to be normalised away:
   must be satisfiable by it. A field `qwen` cannot reliably emit is a defect in the
   protocol, not in `qwen`.
 - **Context budgets differ by an order of magnitude.** A filing that is a light
-  skim for `claude` may consume most of `qwen`'s usable window. This is why
+  skim for a larger-context party may consume most of `qwen`'s usable window. This is why
   `PROTOCOL.md` §5 forbids requiring a read of the whole store.
 - **Permission models differ per CLI.** Each will prompt differently before writing
   into `docket/`. Pre-authorise that path per tool, or every turn costs an approval.
@@ -57,15 +55,16 @@ to be normalised away:
   `PROTOCOL.md`, `docket_lib.py`, the validity model, or how the store reports its
   own state. Cost is not the deciding input here: a wrong answer in the layer
   everything else is checked against is not caught by the layer it broke, and the
-  repair costs more than the implementation saved. Route it to `claude`.
+  repair costs more than the implementation saved. Route protocol and correctness
+  review to `agy`, and route implementation to `codex`.
 
   This is a decision by `human`, taken after `qwen` filed `mindmap/r002/002-qwen.md`
   by hand and invalid. It follows from the asymmetry above rather than sitting
   beside it: a party that cannot reliably emit six front-matter fields is not the
   party to be given the code that decides whether those fields are correct.
 
-- **`qwen`'s output is triaged by `claude`, not re-worked by `qwen`.** When a
-  filing or a change from `qwen` is wrong, the correction goes to `claude`.
+- **`qwen`'s output is triaged by `agy`, not re-worked by `qwen`.** When a
+  filing or a change from `qwen` is wrong, the correction goes to `agy`.
   Handing the repair back to the party that produced the fault risks compounding
   it, and in an append-only store a compounded fault cannot be taken back.
 
@@ -102,6 +101,7 @@ implementations SHOULD warn if it does.
 
 | name | retired | note |
 | --- | --- | --- |
+| `claude` | 2026-09-05 | Claude removed from active workflow by human decision. Superseded by `codex` for primary implementation, and by `agy` for review, architecture, and Qwen triage. Past filings authored by or citing Claude remain valid. |
 | `gemini` | 2026-08-30 | Gemini CLI cannot authenticate — `oauth-personal` returns IneligibleTierError, the free tier having been withdrawn for that client. Superseded by `agy`, which reaches the same models through Antigravity. `r001/001-gemini` was filed before this row existed and was in fact produced by `agy`; see `r001/002-claude-report`. |
 
 ## Trust

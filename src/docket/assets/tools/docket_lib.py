@@ -61,6 +61,24 @@ def parties(store, include_retired=True):
             return names
     return set()
 
+def retired_dates(store):
+    """Known retirement calendar dates, using the same registry as parties()."""
+    for p in (os.path.join(store, "PARTIES.md"), os.path.join(store, "..", "PARTIES.md")):
+        if os.path.exists(p):
+            section = read(p).partition("## Retired")[2].split("\n## ", 1)[0]
+            dates = {}
+            for name, date in re.findall(
+                    r"^\|\s*`([a-z_][a-z0-9_-]*)`\s*\|\s*([^|]+)\|", section, re.M):
+                date = date.strip()
+                try:
+                    dates[name] = datetime.datetime.strptime(date, "%Y-%m-%d").date().isoformat()
+                except ValueError:
+                    # Unknown dates cannot establish that a filing predates
+                    # retirement; retain the existing warning for that party.
+                    pass
+            return dates
+    return {}
+
 def scalar(v):
     """Strip an inline comment, then matching surrounding quotes."""
     v = re.sub(r"\s+#.*$", "", v).strip()
@@ -318,6 +336,7 @@ def validate_docket(store, dirname, known=None):
     """
     known  = parties(store) if known is None else known
     active = parties(store, include_retired=False)
+    retired = retired_dates(store)
     did    = dirname.split("-")[0]
     dp    = os.path.join(store, dirname)
     filings = apply_errata(load(dp))
@@ -406,9 +425,6 @@ def validate_docket(store, dirname, known=None):
             if "act" in fm and fm["act"] not in ACTS: bad(f"act {fm['act']!r} invalid")
             if fm.get("status") and fm["status"] not in STATUSES: bad(f"status {fm['status']!r} invalid")
             if known and fm.get("from") not in known: bad(f"from {fm.get('from')!r} not in PARTIES.md")
-            elif active and fm.get("from") and fm.get("from") not in active:
-                warnings.append(f"{w}: {fm['from']} is retired; its filings remain valid "
-                                "but it should not file anything new")
             asg = fm.get("assignee")
             if asg and asg not in ("none","None") and known and asg not in known:
                 bad(f"assignee {asg!r} is not a registered party")
@@ -450,6 +466,13 @@ def validate_docket(store, dirname, known=None):
                 bad(f"date {raw!r} is neither RFC 3339 UTC "
                     f"(2026-08-29T15:41:00Z) nor a calendar date (2026-08-29)")
             else:
+                if active and fm.get("from") in known and fm["from"] not in active:
+                    cutoff = retired.get(fm["from"])
+                    # The registry records a day, so same-day filings cannot
+                    # be ordered relative to retirement and stay grandfathered.
+                    if cutoff is None or dt.date().isoformat() > cutoff:
+                        warnings.append(f"{w}: {fm['from']} is retired; its filings remain valid "
+                                        "but it should not file anything new")
                 now = datetime.datetime.now(datetime.timezone.utc)
                 # A plain date is compared by day: today's date is not "future".
                 future = (dt.date() > now.date() if len(raw) == 10 else

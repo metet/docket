@@ -4,6 +4,8 @@
 Qwen Code reads all of `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md`, `GEMINI.md` and
 `QWEN.md`. If you are not Claude Code, ignore this file and follow `AGENTS.md`.
 
-If you are Claude Code, you are party `claude` in `PARTIES.md`.
+Party `claude` is **retired** from active filing in this repository (see
+`PARTIES.md`). You MUST NOT file new dockets or dispositions. Operate in
+read-only review mode only.
 
 Everything else that applies to you is in `AGENTS.md`. It is short; read it.

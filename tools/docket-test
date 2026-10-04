@@ -544,18 +544,18 @@ def mk(kind, **kw):
     return subprocess.run(argv, input="b", capture_output=True, text=True)
 
 # r001: open, holds a schema-invalid filing (no <label> in the filename)
-mk("request", frm="claude", slug="scar", title="Scar", act="task", assignee="claude")
-open(os.path.join(st, "r001-scar", "001-claude.md"), "w").write(
-    "---\nprotocol: docket/0.2\nid: r001/001-claude\ndocket: r001\nfrom: claude\n"
+mk("request", frm="codex", slug="scar", title="Scar", act="task", assignee="codex")
+open(os.path.join(st, "r001-scar", "001-codex.md"), "w").write(
+    "---\nprotocol: docket/0.2\nid: r001/001-codex\ndocket: r001\nfrom: codex\n"
     "type: filing\nact: answer\ndate: 2026-08-30\n---\n\n# Bad\n\nb\n")
 # r002: an authority violation -- well formed, counts, one attempt ignored
-mk("request", frm="claude", slug="auth", title="Auth", act="task", assignee="claude")
+mk("request", frm="codex", slug="auth", title="Auth", act="task", assignee="codex")
 open(os.path.join(st, "r002-auth", "001-qwen-answer.md"), "w").write(
     "---\nprotocol: docket/0.2\nid: r002/001-qwen\ndocket: r002\nfrom: qwen\n"
     "type: filing\nact: answer\nassignee: qwen\ndate: 2026-08-30\n---\n\n# V\n\nb\n")
 
 def read(dk):
-    _, out, _ = server([INIT, tc("docket_read", {"docket": dk})], party="claude", cwd=d)
+    _, out, _ = server([INIT, tc("docket_read", {"docket": dk})], party="codex", cwd=d)
     return out[-1]["result"]["content"][0]["text"]
 
 scar = read("r001")
@@ -563,8 +563,8 @@ check("T21", "an invalid filing is marked INVALID", "INVALID" in scar, scar[:80]
 check("T21", "the marker says it reached no derived state",
       "excluded from this docket's derived state" in scar, scar[:80])
 check("T21", "the reason is attributed to the right filing",
-      scar.split("=== 001-claude.md ===")[1].count("filename MUST be") == 1
-      and "filename MUST be" not in scar.split("=== 001-claude.md ===")[0],
+      scar.split("=== 001-codex.md ===")[1].count("filename MUST be") == 1
+      and "filename MUST be" not in scar.split("=== 001-codex.md ===")[0],
       "reason landed on the wrong filing")
 
 viol = read("r002")
@@ -578,19 +578,19 @@ check("T21", "a clean filing gets no validity note",
       ">" not in read("r002").split("=== 000-request.md ===")[1].split("===")[0],
       "annotated a clean filing")
 
-_, out_l, _ = server([INIT, tc("docket_list", {})], party="claude", cwd=d)
+_, out_l, _ = server([INIT, tc("docket_list", {})], party="codex", cwd=d)
 listing = out_l[-1]["result"]["content"][0]["text"]
 check("T21", "docket_list flags an open docket holding an invalid filing",
       "1 invalid filing" in listing, listing.replace("\n", "|")[:120])
 
 # A closed docket is not listed at all, so its scar needs its own section --
 # grandfathering (r011) must never mean hiding.
-mk("close", frm="claude", docket="r001", title="Done", status="resolved",
+mk("close", frm="codex", docket="r001", title="Done", status="resolved",
    evidence="git:abc1234")
-_, out_c, _ = server([INIT, tc("docket_list", {})], party="claude", cwd=d)
+_, out_c, _ = server([INIT, tc("docket_list", {})], party="codex", cwd=d)
 closed = out_c[-1]["result"]["content"][0]["text"]
 check("T21", "a scar in a closed docket is still reported",
-      "closed docket" in closed and "001-claude.md" in closed,
+      "closed docket" in closed and "001-codex.md" in closed,
       closed.replace("\n", "|")[:140])
 remove_tree(d)
 
@@ -891,18 +891,18 @@ to: [claude]
 type: request
 act: question
 status: open
-assignee: claude
+assignee: codex
 date: 2026-08-29T15:30:00Z
 ---
 
 Legacy request carrying `to`.
 """)
-legacy("001-claude-answer.md", """---
+legacy("001-codex-answer.md", """---
 protocol: docket/0.2
-id: r001/001-claude
+id: r001/001-codex
 docket: r001
 parent: r001/000
-from: claude
+from: codex
 to: [qwen, nobody-by-this-name]
 type: filing
 act: answer
@@ -921,7 +921,7 @@ check("T24", "a 0.2 filing produces no warning at all", warns == [], str(warns))
 check("T24", "0.2 is not treated as reduced-fidelity", "docket/0.2" not in _L.LEGACY,
       str(sorted(_L.LEGACY)))
 check("T24", "reduction is unchanged by the presence of `to`",
-      (st["assignee"], st["waiting_on"]) == ("claude", "qwen"),
+      (st["assignee"], st["waiting_on"]) == ("codex", "qwen"),
       str((st["assignee"], st["waiting_on"])))
 check("T24", "0.2 is still an accepted protocol version", "docket/0.2" in _L.PROTOCOLS,
       str(sorted(_L.PROTOCOLS)))
@@ -1362,6 +1362,99 @@ check("T34", "the package entry point scaffolds from bundled assets",
       os.path.isfile(os.path.join(d34, "docket", "PROTOCOL.md")),
       f"exit={init34.returncode} stderr={init34.stderr[:120]}")
 remove_tree(d34)
+
+# ---- T35: retirement warns only after the recorded calendar day (r045) ----
+d35 = fresh()
+st35 = Path(d35) / "docket"
+registry35 = """# Parties
+## Registry
+| name | runtime |
+| --- | --- |
+| `codex` | Codex CLI |
+## Retired
+| name | retired | note |
+| --- | --- | --- |
+| `claude` | 2026-09-05 | retired |
+"""
+(st35 / "PARTIES.md").write_text(registry35, encoding="utf-8")
+subprocess.run([sys.executable, os.path.join(HERE, "docket-new"), "request",
+                "--store", str(st35), "--from", "codex", "--slug", "retired",
+                "--title", "Retirement", "--assignee", "codex"],
+               input="b", capture_output=True, text=True, check=True)
+check("T35", "retired parties remain registered but are not active",
+      "claude" in _L.parties(str(st35)) and
+      "claude" not in _L.parties(str(st35), include_retired=False))
+filing35 = st35 / "r001-retired" / "001-claude-answer.md"
+for date35, expect_warn35 in (("2026-09-04", False), ("2026-09-05", False),
+                              ("2026-09-05T23:59:59Z", False),
+                              ("2026-09-06", True), ("2026-09-06T00:00:01Z", True),
+                              ("invalid-date", False)):
+    filing35.write_text(
+        "---\nprotocol: docket/0.3\nid: r001/001-claude\ndocket: r001\n"
+        "from: claude\ntype: filing\nact: answer\n"
+        f"date: {date35}\n---\n\n# Answer\n", encoding="utf-8")
+    _, invalid35, errors35, warnings35, _ = _L.validate_docket(str(st35), "r001-retired")
+    retired_warn35 = [w for w in warnings35 if "claude is retired" in w]
+    check("T35", f"retirement boundary for {date35}",
+          bool(retired_warn35) == expect_warn35 and
+          (bool(errors35) == (date35 == "invalid-date")), str((errors35, warnings35)))
+check("T35", "malformed filing dates remain excluded from reduction",
+      "001-claude-answer.md" in invalid35)
+# Registry lookup is store-first and falls back to the parent if absent.
+(Path(d35) / "PARTIES.md").write_text(registry35.replace("2026-09-05", "2026-09-07"),
+                                     encoding="utf-8")
+check("T35", "store-local retirement dates override the parent registry",
+      _L.retired_dates(str(st35)).get("claude") == "2026-09-05")
+(st35 / "PARTIES.md").unlink()
+check("T35", "retirement dates also resolve from the parent registry",
+      _L.retired_dates(str(st35)).get("claude") == "2026-09-07")
+remove_tree(d35)
+
+# ---- T36: qualified writes use the resolved workspace's local id (r048) ----
+from unittest.mock import patch
+d36_local, d36_remote = fresh(), fresh()
+cfg36 = Path(d36_local) / "workspaces"
+cfg36.write_text(d36_local + "\n" + d36_remote + "\n", encoding="utf-8")
+for workspace36 in (d36_local, d36_remote):
+    subprocess.run([sys.executable, os.path.join(HERE, "docket-new"), "request",
+                    "--store", os.path.join(workspace36, "docket"), "--from", "codex",
+                    "--slug", "qualified", "--title", "Qualified", "--assignee", "codex"],
+                   input="b", capture_output=True, text=True, check=True)
+remote_name36 = os.path.basename(d36_remote)
+with patch.dict(os.environ, {"DOCKET_WORKSPACES_FILE": str(cfg36)}):
+    rc36, replies36, err36 = server(
+        [INIT, tc("docket_file", {"docket": remote_name36 + "/r001", "title": "Answer",
+                                  "act": "answer", "body": "workspace-qualified write"})],
+        party="codex", cwd=d36_local)
+    result36 = next((m.get("result", {}) for m in replies36 if m.get("id") == 2), {})
+    check("T36", "workspace-qualified docket_file succeeds over stdio",
+          rc36 == 0 and result36 and not result36.get("isError"), str(result36) + err36)
+    remote_docket36 = Path(d36_remote) / "docket" / "r001-qualified"
+    local_docket36 = Path(d36_local) / "docket" / "r001-qualified"
+    check("T36", "the first codex answer lands in the selected workspace only",
+          (remote_docket36 / "001-codex-answer.md").is_file() and
+          not (local_docket36 / "001-codex-answer.md").exists())
+    args36 = {"docket": "[" + remote_name36 + "] r001", "title": "Follow-up",
+              "act": "answer", "body": "bracket-qualified write", "refs": ["README.md"]}
+    original36 = json.loads(json.dumps(args36))
+    with patch.object(_mcp, "PARTY", "codex"), \
+            patch.object(_mcp, "store", return_value=os.path.join(d36_local, "docket")):
+        result36 = _mcp.call("docket_file", args36)
+        check("T36", "bracket-qualified writes use the same normalization",
+              not result36.get("isError") and
+              (remote_docket36 / "002-codex-answer.md").is_file(), str(result36))
+        check("T36", "qualified writes preserve the caller's argument mapping",
+              args36 == original36, str(args36))
+        close36 = _mcp.call("docket_close", {
+            "docket": remote_name36 + "/r001", "title": "Done", "body": "Confirmed",
+            "evidence": ["git:abc1234"]})
+        check("T36", "workspace-qualified docket_close resolves the target too",
+              not close36.get("isError") and
+              _L.validate_docket(str(remote_docket36.parent), remote_docket36.name)[4]["status"]
+                  == "resolved" and
+              _L.validate_docket(str(local_docket36.parent), local_docket36.name)[4]["status"]
+                  == "open", str(close36))
+remove_tree(d36_local); remove_tree(d36_remote)
 
 # ---- report ----
 w = max(len(r[1]) for r in results)

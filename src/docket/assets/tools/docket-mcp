@@ -481,9 +481,12 @@ def run_new(kind, args, target=None):
                     "Re-register it with -e DOCKET_PARTY=<your party name>.", True)
     target_store = target or store()
     if target is None and args.get("docket"):
-        found_st, _ = find_docket_store(args["docket"])
+        found_st, found_d = find_docket_store(args["docket"])
         if found_st:
             target_store = found_st
+            # docket-new accepts a local id, not a workspace qualifier. Copy
+            # before normalizing so the caller retains its original arguments.
+            args = dict(args, docket=found_d.split("-")[0])
     argv = [sys.executable, NEW, kind, "--store", target_store, "--from", PARTY,
             "--title", args["title"]]
     for flag, key in (("--slug","slug"), ("--docket","docket"), ("--act","act"),

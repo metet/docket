@@ -182,7 +182,7 @@ tools/docket-workspace status
 **Example dashboard output:**
 ```text
 === [docket] /home/metet/coding/docket ===
-  r004-session-handoff         status=open  assignee=claude  waiting_on=claude
+  r004-session-handoff         status=open  assignee=agy  waiting_on=agy
 
 === [mindmap] /home/metet/coding/qwen_code/mindmap ===
   r002-palette-drag-drop       status=open  assignee=codex  waiting_on=codex
@@ -220,7 +220,7 @@ without placing machine-specific paths in the package.
 ### Automatic Cross-Workspace Turn Detection
 Even when an agent is running inside a specific repository, `docket_list` automatically checks all other trusted workspaces registered in `~/.config/docket/workspaces`. If there is any open docket waiting on that agent in another project, `docket_list` surfaces it:
 ```text
-r004-session-handoff  status=open  assignee=claude  waiting_on=claude
+r004-session-handoff  status=open  assignee=agy  waiting_on=agy
 
 1 waiting on you (codex) in other trusted workspaces:
   [mindmap] r002-palette-drag-drop  status=open  waiting_on=codex  (in /home/metet/coding/qwen_code/mindmap)
