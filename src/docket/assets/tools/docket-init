@@ -69,8 +69,11 @@ chat log. The protocol lives in {where}.
 
 **Start every session by reading `{store}/INDEX.md`.** Its *Whose turn* section
 names the party each open docket is waiting on; if any name you, deal with those
-first. Read `{store}/PROTOCOL.md` before writing a filing — do not infer the
-format from surrounding files.
+first. Before your first filing in a session, read the **Quick start** in
+`{store}/PROTOCOL.md` (stop at `## 1.`):
+`sed '/^## 1[.]/,$d' {store}/PROTOCOL.md`. Consult §§1–9 as needed for details
+beyond the examples, especially §7 when evaluating a filing's request. Do not
+infer the format from surrounding files.
 
 **File when you** have a question whose answer changes what someone builds;
 finish work someone asked for (with `evidence`, so the claim is checkable);

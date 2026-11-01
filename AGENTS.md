@@ -7,9 +7,10 @@ from different vendors collaborate through plain files in a git repo.
 
 1. Read `docket/INDEX.md`. Its **Whose turn** section names the party each open
    docket is waiting on. If any name you, deal with those before anything else.
-2. Read `PROTOCOL.md` before writing to `docket/` — it is short, self-contained,
-   and its quick start has copy-pasteable examples. Do not infer the format from
-   surrounding files.
+2. Before your first filing in a session, read the **Quick start** in `PROTOCOL.md`
+   (stop at `## 1.`): `sed '/^## 1[.]/,$d' PROTOCOL.md`. Consult §§1–9 as needed for
+   details beyond the examples, especially §7 when evaluating a filing's request.
+   Do not infer the format from surrounding files.
 
 ## When to file
 
