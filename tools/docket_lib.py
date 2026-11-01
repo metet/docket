@@ -43,7 +43,8 @@ RETRACT_ONLY = {"date"}   # every filing has its own date; it cannot be replaced
 PROTECTED = {"protocol", "id", "docket", "from", "type", "status", "assignee"}
 STATUSES  = {"open","blocked","resolved","withdrawn"}
 TERMINAL  = {"resolved","withdrawn"}
-PARTY_RE  = re.compile(r"[a-z_][a-z0-9_-]*")
+# Hyphens separate filename fields; multi-word party names use underscores.
+PARTY_RE  = re.compile(r"[a-z_][a-z0-9_]*")
 
 def read(path):
     with open(path, encoding="utf-8", newline="") as f:
@@ -56,9 +57,9 @@ def parties(store, include_retired=True):
         if os.path.exists(p):
             txt = read(p)
             active = txt.split("## Retired")[0]
-            names = set(re.findall(r"^\|\s*`([a-z_][a-z0-9_-]*)`", active, re.M))
+            names = set(re.findall(rf"^\|\s*`({PARTY_RE.pattern})`", active, re.M))
             if include_retired:
-                names |= set(re.findall(r"^\|\s*`([a-z_][a-z0-9_-]*)`", txt, re.M))
+                names |= set(re.findall(rf"^\|\s*`({PARTY_RE.pattern})`", txt, re.M))
             return names
     return set()
 
@@ -69,7 +70,7 @@ def retired_dates(store):
             section = read(p).partition("## Retired")[2].split("\n## ", 1)[0]
             dates = {}
             for name, date in re.findall(
-                    r"^\|\s*`([a-z_][a-z0-9_-]*)`\s*\|\s*([^|]+)\|", section, re.M):
+                    rf"^\|\s*`({PARTY_RE.pattern})`\s*\|\s*([^|]+)\|", section, re.M):
                 date = date.strip()
                 try:
                     dates[name] = datetime.datetime.strptime(date, "%Y-%m-%d").date().isoformat()
@@ -140,7 +141,8 @@ def front_matter(text):
         if km: f[km.group(1)] = scalar(km.group(2))
     return f
 
-FILING_RE = re.compile(r"^(\d{3})(?:-([a-z0-9_-]+?))?(?:-([a-z0-9-]+))?\.md$")
+FILING_RE = re.compile(
+    rf"^(\d{{3}})(?:-({PARTY_RE.pattern}))?(?:-([a-z0-9][a-z0-9-]*))?\.md$")
 
 def is_filing(fn):
     """Only NNN-prefixed .md files are filings. A README.md or NOTES.md sitting

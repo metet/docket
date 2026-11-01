@@ -157,9 +157,14 @@ Nothing is lost by referencing: a filing's version is carried by its own
   docket directory and creating `000` are the same act, so the only race there is
   the directory race, handled by allocation below.
 - Every other filing MUST be named `<NNN>-<party>-<label>.md`, `NNN` zero-padded:
-  - `<party>` is your registered name from `PARTIES.md`. **Required.**
-  - `<label>` is free-form (lowercase letters, digits, hyphens). A human hint,
-    **not** the `act` field, and not validated against the `act` enum.
+  - `<party>` is your registered name from `PARTIES.md` and MUST match
+    `[a-z_][a-z0-9_]*`: lowercase ASCII letters, digits, and underscores,
+    starting with a letter or underscore. **Required.** Hyphens are reserved
+    for filename field separators; use underscores in multi-word party names.
+  - `<label>` MUST match `[a-z0-9][a-z0-9-]*` (lowercase ASCII letters, digits,
+    hyphens, starting with a letter or digit). A human hint, **not** the `act`
+    field, and not validated against the `act` enum. The first hyphen after the
+    sequence begins `<party>`; the next begins `<label>`.
 - Filings MUST NOT be modified or deleted once created.
 
 ### Identity — the path *is* the identity
@@ -616,7 +621,10 @@ the most a pull-only protocol can offer and is enough to keep dockets closing.
 cost, and how to invoke it. Use it to decide who a request should go to — expensive
 models for review and judgement, cheap local models for bulk implementation.
 
-Your `from` value MUST match a name in `PARTIES.md`.
+Party names MUST match `[a-z_][a-z0-9_]*`: lowercase ASCII letters, digits, and
+underscores, starting with a letter or underscore. Hyphens are reserved as
+filename field separators (§1), so multi-word names use underscores, e.g.
+`local_bot`. Your `from` value MUST match a name in `PARTIES.md`.
 
 Parties MUST NOT be removed from the registry. Filings are immutable, so deleting
 a party would invalidate its entire history — a mutable document breaking an

@@ -1557,11 +1557,77 @@ fallback39 = subprocess.run(["git", "commit", "-m", "wrong fallback author"], cw
                                            GIT_AUTHOR_EMAIL="local_bot@docket.invalid"))
 check("T39", "underscore author fallback cannot bypass attribution checks",
       fallback39.returncode == 1 and "local_bot" in fallback39.stderr, fallback39.stderr)
-for party39 in ("Upper", "9bot", "ébot"):
+for party39 in ("Upper", "9bot", "ébot", "bot-fast"):
     invalid39 = commit(d39, party39, "invalid name")
     check("T39", f"docket-commit rejects a name outside registry grammar: {party39}",
           invalid39.returncode == 2 and "not a plain name" in invalid39.stderr, invalid39.stderr)
 remove_tree(d39)
+
+# ---- T40: hyphens delimit party names and labels unambiguously (r062) ----
+d40 = fresh()
+st40 = Path(d40) / "docket"
+(st40 / "PARTIES.md").write_text(
+    "# Parties\n\n| name | runtime |\n| --- | --- |\n"
+    "| `codex` | Test |\n| `bot` | Test |\n| `local_bot` | Test |\n"
+    "| `_bot2` | Test |\n| `bot-fast` | Test |\n"
+    "\n## Retired\n\n| name | retired |\n| --- | --- |\n"
+    "| `legacy_bot` | 2026-01-02 |\n| `legacy-bot` | 2026-01-02 |\n",
+    encoding="utf-8")
+active40 = {"codex", "bot", "local_bot", "_bot2"}
+check("T40", "active and retired registries exclude hyphenated party names",
+      _L.parties(str(st40), include_retired=False) == active40 and
+      _L.parties(str(st40)) == active40 | {"legacy_bot"},
+      str(_L.parties(str(st40))))
+check("T40", "retirement dates use the same party grammar",
+      _L.retired_dates(str(st40)) == {"legacy_bot": "2026-01-02"},
+      str(_L.retired_dates(str(st40))))
+request40 = newf(d40, kind="request", **{
+    "from": "codex", "slug": "grammar", "title": "Grammar",
+    "assignee": "_bot2", "body": "b"})
+check("T40", "underscore and digit names can be assigned",
+      request40.returncode == 0, request40.stderr)
+dp40 = st40 / "r001-grammar"
+for party40 in ("bot", "local_bot", "_bot2"):
+    answer40 = newf(d40, kind="filing", docket="r001", **{
+        "from": party40, "label": "fast-answer-v2", "act": "answer",
+        "title": "Answer", "body": "b"})
+    check("T40", f"{party40} can file a hyphenated label",
+          answer40.returncode == 0, answer40.stderr)
+before40 = sorted(p.relative_to(st40) for p in st40.rglob("*"))
+for kind40 in ("request", "filing"):
+    denied40 = newf(d40, kind=kind40, **{
+        "from": "bot-fast", "slug": "denied", "docket": "r001",
+        "title": "Denied", "body": "b"})
+    check("T40", f"a hyphenated registry row cannot author a {kind40}",
+          denied40.returncode == 2 and "not registered" in denied40.stderr,
+          denied40.stderr)
+denied40 = newf(d40, kind="request", **{
+    "from": "codex", "slug": "denied", "assignee": "bot-fast",
+    "title": "Denied", "body": "b"})
+check("T40", "a hyphenated registry row cannot be assigned or allocate files",
+      denied40.returncode == 2 and "not a registered party" in denied40.stderr and
+      sorted(p.relative_to(st40) for p in st40.rglob("*")) == before40,
+      denied40.stderr)
+# Legacy ids and same-sequence ordering remain filename-derived. In particular,
+# 001-bot-fast-answer-v2.md belongs to bot, even beside a bot-fast registry row.
+for party40, proto40, fid40 in (("bot", "docket/0.1", "r001/010"),
+                               ("local_bot", "docket/0.2", "r001/010-local_bot")):
+    (dp40 / f"010-{party40}-old-answer.md").write_text(
+        f"---\nprotocol: {proto40}\nid: {fid40}\ndocket: r001\n"
+        f"from: {party40}\ntype: filing\nact: answer\ndate: 2026-01-01\n---\n",
+        encoding="utf-8")
+filings40, invalid40, errors40, _, state40 = _L.validate_docket(str(st40), dp40.name)
+check("T40", "party and label delimiters preserve ids and canonical order across versions",
+      [(f["num"], f["party"], f["fm"].get("id")) for f in filings40] == [
+          ("000", None, "r001/000"), ("001", "bot", "r001/001-bot"),
+          ("002", "local_bot", "r001/002-local_bot"),
+          ("003", "_bot2", "r001/003-_bot2"),
+          ("010", "bot", "r001/010"), ("010", "local_bot", "r001/010-local_bot")],
+      str([(f["fn"], f["party"], f["fm"].get("id")) for f in filings40]))
+check("T40", "mixed-version filings with hyphenated labels validate and reduce",
+      not invalid40 and not errors40 and state40["assignee"] == "_bot2" and
+      state40["waiting_on"] == "codex", str(errors40) + str(state40))
+remove_tree(d40)
 
 # ---- report ----
 w = max(len(r[1]) for r in results)
