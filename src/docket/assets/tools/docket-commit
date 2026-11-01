@@ -26,6 +26,8 @@ Three things, none of which `git commit` does on its own:
   tools/docket-commit -F body.txt            # party from DOCKET_PARTY
 """
 import os, sys, subprocess, tempfile
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from docket_lib import PARTY_RE, read
 
 TRAILER = "Docket-Party"
 # RFC 2606 reserves .invalid precisely so it can never reach a real mailbox.
@@ -75,14 +77,14 @@ def main():
     party, msg, path, rest = split_args(sys.argv[1:])
     if not party:
         die("no party: pass --from <party> or set DOCKET_PARTY")
-    if not party.replace("-", "").isalnum():
+    if not PARTY_RE.fullmatch(party):
         die(f"party {party!r} is not a plain name")
     if msg is None and path is None:
         die("no message: pass -m <message> or -F <file>")
     if msg is not None and path is not None:
         die("pass -m or -F, not both")
 
-    text = msg if msg is not None else open(path, encoding="utf-8").read()
+    text = msg if msg is not None else read(path)
 
     fd, tmp = tempfile.mkstemp(prefix="docket-commit-", suffix=".txt")
     try:

@@ -472,7 +472,7 @@ def run_new(kind, args, target=None):
     """Every write goes through docket-new: one implementation, no drift.
     argv is built as a list, so no argument can inject a flag.
 
-    `target` is a store already resolved from an explicit workspace selector.
+    `target` is a store already resolved from a workspace selector or docket id.
     It wins over local resolution, including over a local store that resolves
     fine: naming the workspace is the caller saying where this goes, which is
     the entire point of the parameter (r018)."""
@@ -739,6 +739,9 @@ def call(name, args):
             target, e = resolve_workspace(args["workspace"])
             if e:
                 return text(e, True)
+        elif name in ("docket_file", "docket_close"):
+            target = found_st
+            args = dict(args, docket=found_d.split("-")[0])
         return run_new({"docket_open": "request", "docket_file": "filing",
                         "docket_close": "close"}[name], args, target)
     return text(f"unknown tool {name}", True)

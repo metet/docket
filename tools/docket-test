@@ -52,7 +52,7 @@ check("T1", "survives a JSON array", rc == 0 and any(m.get("id") == 3 for m in o
       f"exit={rc} ids={[m.get('id') for m in out]}")
 
 # ---- T2: a failing non-tools/call method returns a JSON-RPC error, not content ----
-rc, out, _ = server([INIT, {"jsonrpc":"2.0","id":9,"method":"tools/call"}])   # params missing
+_, out, _ = server([INIT, {"jsonrpc":"2.0","id":9,"method":"tools/call"}])   # params missing
 m = next((x for x in out if x.get("id") == 9), {})
 check("T2", "malformed tools/call -> JSON-RPC error", "error" in m,
       f"got keys={sorted(m.keys())}")
@@ -187,7 +187,7 @@ check("T9", "all tools are closed-world", not bad, f"wrong: {bad}")
 
 # ---- T12: act is not correctable, and saying so must not poison the store ----
 d = fresh()
-new_ = lambda *a, **k: subprocess.run([sys.executable, os.path.join(D,"tools","docket-new"), *a],
+new_ = lambda *a: subprocess.run([sys.executable, os.path.join(D,"tools","docket-new"), *a],
                                       input="b", capture_output=True, text=True, cwd=d)
 new_("request", "--store","docket","--from","claude","--slug","q","--title","Q","--act","question")
 new_("filing","--store","docket","--docket","r001","--from","qwen","--act","answer",
@@ -238,14 +238,14 @@ _empty_ws_dir = tempfile.mkdtemp(prefix="dk-nows-")
 _empty_ws = os.path.join(_empty_ws_dir, "workspaces")
 open(_empty_ws, "w").close()
 
-def roots_session(caps, answer, cwd, store_env="docket", tool="docket_list"):
+def roots_session(caps, answer, cwd, tool="docket_list"):
     """Drive a live server, answering a roots/list request if one arrives.
 
     Pinned to an empty workspace allowlist. Without that the server reads the
     developer's real config, and a machine that happens to trust a store makes
     these checks pass or fail on local state rather than on the code.
     """
-    env = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE=store_env,
+    env = dict(os.environ, DOCKET_PARTY="claude", DOCKET_STORE="docket",
                DOCKET_WORKSPACES_FILE=_empty_ws)
     pr = subprocess.Popen([sys.executable, MCP], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env, cwd=cwd)
@@ -1038,7 +1038,7 @@ import importlib.util as _iu, importlib.machinery as _im
 _spec = _iu.spec_from_loader("dmcp", _im.SourceFileLoader("dmcp", MCP))
 _mcp = _iu.module_from_spec(_spec)
 _spec.loader.exec_module(_mcp)          # name is not __main__, so main() stays put
-rc, out26, _ = server([INIT])
+_, out26, _ = server([INIT])
 info = next((m["result"]["serverInfo"] for m in out26 if m.get("id") == 1), {})
 check("T26", "initialize reports the server's own version",
       info.get("version") == _mcp.SERVER_VERSION, str(info))
@@ -1136,6 +1136,8 @@ subprocess.run(["git", "-C", d29, "config", "user.email", "docket-test@example.i
                capture_output=True, text=True)
 p29 = subprocess.run([sys.executable, os.path.join(D, "tools", "docket-init"), d29],
                      capture_output=True, text=True)
+check("T29", "docket-init succeeds in a downstream repository",
+      p29.returncode == 0, p29.stderr)
 hooks_dir = os.path.join(d29, "tools", "git-hooks")
 check("T29", "docket-init creates tools/git-hooks/",
       os.path.isdir(hooks_dir), f"exists={os.path.exists(hooks_dir)}")
@@ -1181,6 +1183,8 @@ p30_l1 = subprocess.run(
 p30_l2 = subprocess.run(
     [sys.executable, os.path.join(D, "tools", "docket-init"), d30_l2, "--link"],
     capture_output=True, text=True)
+check("T30", "the second linked project initializes successfully",
+      p30_l2.returncode == 0, p30_l2.stderr)
 l1_proto = os.path.join(d30_l1, "docket", "PROTOCOL.md")
 l1_parties = os.path.join(d30_l1, "docket", "PARTIES.md")
 check("T30", "--link provides PROTOCOL.md on every platform",
@@ -1438,16 +1442,22 @@ with patch.dict(os.environ, {"DOCKET_WORKSPACES_FILE": str(cfg36)}):
               "act": "answer", "body": "bracket-qualified write", "refs": ["README.md"]}
     original36 = json.loads(json.dumps(args36))
     with patch.object(_mcp, "PARTY", "codex"), \
-            patch.object(_mcp, "store", return_value=os.path.join(d36_local, "docket")):
+            patch.object(_mcp, "store", return_value=os.path.join(d36_local, "docket")), \
+            patch.object(_mcp, "find_docket_store", wraps=_mcp.find_docket_store) as lookup36:
         result36 = _mcp.call("docket_file", args36)
+        check("T36", "docket_file resolves its target exactly once",
+              lookup36.call_count == 1, str(lookup36.call_count))
         check("T36", "bracket-qualified writes use the same normalization",
               not result36.get("isError") and
               (remote_docket36 / "002-codex-answer.md").is_file(), str(result36))
         check("T36", "qualified writes preserve the caller's argument mapping",
               args36 == original36, str(args36))
+        lookup36.reset_mock()
         close36 = _mcp.call("docket_close", {
             "docket": remote_name36 + "/r001", "title": "Done", "body": "Confirmed",
             "evidence": ["git:abc1234"]})
+        check("T36", "docket_close resolves its target exactly once",
+              lookup36.call_count == 1, str(lookup36.call_count))
         check("T36", "workspace-qualified docket_close resolves the target too",
               not close36.get("isError") and
               _L.validate_docket(str(remote_docket36.parent), remote_docket36.name)[4]["status"]
@@ -1455,6 +1465,103 @@ with patch.dict(os.environ, {"DOCKET_WORKSPACES_FILE": str(cfg36)}):
               _L.validate_docket(str(local_docket36.parent), local_docket36.name)[4]["status"]
                   == "open", str(close36))
 remove_tree(d36_local); remove_tree(d36_remote)
+
+# ---- T37: index ages accept every supported date format (r056) ----
+d37 = fresh()
+st37 = Path(d37) / "docket"
+for n37, date37 in enumerate(("2020-01-02", "2020-01-02T12:34:56Z", "bad-date"), 1):
+    dp37 = st37 / f"r{n37:03d}-age"
+    dp37.mkdir()
+    (dp37 / "000-request.md").write_text(
+        f"---\nprotocol: docket/0.3\nid: r{n37:03d}/000\ndocket: r{n37:03d}\n"
+        f"from: codex\ntype: request\nstatus: open\nassignee: codex\ndate: {date37}\n"
+        "---\n\n# Age\n", encoding="utf-8")
+p37 = subprocess.run([sys.executable, os.path.join(HERE, "docket-index"), str(st37)],
+                     capture_output=True, text=True)
+rows37 = {line.split("`", 2)[1]: line.split("|")[-2].strip()
+          for line in (st37 / "INDEX.md").read_text(encoding="utf-8").splitlines()
+          if line.startswith("| [`r")}
+check("T37", "calendar dates and UTC timestamps both produce index ages",
+      p37.returncode == 0 and rows37.get("r001", "").endswith("d") and
+      rows37.get("r002", "").endswith("d"), str(rows37) + p37.stderr)
+check("T37", "an invalid date leaves the index age blank",
+      rows37.get("r003") == "", str(rows37))
+remove_tree(d37)
+
+# ---- T38: writer authority uses validated, corrected state (r059) ----
+d38 = fresh()
+newf(d38, kind="request", **{"from": "qwen", "slug": "authority", "title": "Authority",
+                             "assignee": "codex", "body": "b"})
+dp38 = Path(d38) / "docket" / "r001-authority"
+(dp38 / "050-codex-handoff.md").write_text(
+    "---\nprotocol: docket/0.3\nid: r001/050-codex\ndocket: r001\nfrom: codex\n"
+    "type: filing\nact: answer\nassignee: agy\nrefs: [:0]\ndate: 2026-01-02\n---\n",
+    encoding="utf-8")
+denied38 = newf(d38, kind="filing", docket="r001", **{
+    "from": "agy", "title": "Block", "status": "blocked", "blocked_on": "human", "body": "b"})
+check("T38", "an invalid handoff cannot grant write-time status authority",
+      denied38.returncode == 2 and "may not set status" in denied38.stderr, denied38.stderr)
+allowed38 = newf(d38, kind="filing", docket="r001", **{
+    "from": "codex", "title": "Block", "status": "blocked", "blocked_on": "human", "body": "b"})
+check("T38", "the valid assignee retains authority and allocation counts invalid filings",
+      allowed38.returncode == 0 and (dp38 / "051-codex-filing.md").is_file(),
+      allowed38.stdout + allowed38.stderr)
+erratum38 = newf(d38, kind="filing", docket="r001", **{
+    "from": "codex", "title": "Repair refs", "act": "erratum", "supersedes": "r001/050-codex",
+    "corrects": '"refs", ', "refs": "README.md", "body": "b"})
+check("T38", "quoted corrects fields and trailing separators serialize consistently",
+      erratum38.returncode == 0 and
+      _L.as_list(_L.front_matter(_L.read(dp38 / "052-codex-erratum.md"))["corrects"]) == ["refs"],
+      erratum38.stdout + erratum38.stderr)
+allowed38 = newf(d38, kind="filing", docket="r001", **{
+    "from": "agy", "title": "Unblock", "status": "open", "body": "b"})
+check("T38", "an erratum restoring a handoff restores write-time authority",
+      allowed38.returncode == 0, allowed38.stdout + allowed38.stderr)
+for corrects38 in (", ,", '""', "refs, status"):
+    bad38 = newf(d38, kind="filing", docket="r001", **{
+        "from": "codex", "title": "Bad correction", "act": "erratum",
+        "supersedes": "r001/050-codex", "corrects": corrects38, "body": "b"})
+    check("T38", f"empty or protected corrects fields are refused: {corrects38!r}",
+          bad38.returncode == 2, bad38.stderr)
+newf(d38, kind="request", **{"from": "qwen", "slug": "invalid", "title": "Invalid", "body": "b"})
+req38 = Path(d38) / "docket" / "r002-invalid" / "000-request.md"
+req38.write_text(req38.read_text(encoding="utf-8").replace("type: request", "type: unknown"),
+                 encoding="utf-8")
+close38 = newf(d38, kind="close", docket="r002", **{
+    "from": "qwen", "title": "Close", "evidence": "README.md", "body": "b"})
+check("T38", "an invalid request cannot grant requester authority to close",
+      close38.returncode == 2 and "only the requester (None)" in close38.stderr, close38.stderr)
+remove_tree(d38)
+
+# ---- T39: registered underscore parties can commit and are checked (r060) ----
+d39 = repo()
+with open(Path(d39) / "docket" / "PARTIES.md", "a", encoding="utf-8") as f:
+    f.write("\n| `local_bot` | Test | test | small | 0 | Test |\n")
+newf(d39, kind="request", **{"from": "codex", "slug": "names", "title": "Names", "body": "b"})
+stage(d39, "docket/.seq", "docket/r001-names/000-request.md", "docket/PARTIES.md")
+commit(d39, "codex", "seed request")
+newf(d39, kind="filing", docket="r001", **{
+    "from": "local_bot", "title": "Answer", "act": "answer", "body": "b"})
+stage(d39, "docket/r001-names/001-local_bot-answer.md")
+wrong39 = commit(d39, "codex", "wrong author")
+check("T39", "the attribution hook catches underscore filing authors",
+      wrong39.returncode == 1 and "local_bot" in wrong39.stderr, wrong39.stderr)
+own39 = commit(d39, "local_bot", "own answer")
+check("T39", "docket-commit accepts and attributes an underscore party",
+      own39.returncode == 0 and show(d39, "%an") == "local_bot", own39.stderr)
+newf(d39, kind="filing", docket="r001", **{
+    "from": "codex", "title": "Follow-up", "act": "answer", "body": "b"})
+stage(d39, "docket/r001-names/002-codex-answer.md")
+fallback39 = subprocess.run(["git", "commit", "-m", "wrong fallback author"], cwd=d39,
+    capture_output=True, text=True, env=dict(GENV, GIT_AUTHOR_NAME="local_bot",
+                                           GIT_AUTHOR_EMAIL="local_bot@docket.invalid"))
+check("T39", "underscore author fallback cannot bypass attribution checks",
+      fallback39.returncode == 1 and "local_bot" in fallback39.stderr, fallback39.stderr)
+for party39 in ("Upper", "9bot", "ébot"):
+    invalid39 = commit(d39, party39, "invalid name")
+    check("T39", f"docket-commit rejects a name outside registry grammar: {party39}",
+          invalid39.returncode == 2 and "not a plain name" in invalid39.stderr, invalid39.stderr)
+remove_tree(d39)
 
 # ---- report ----
 w = max(len(r[1]) for r in results)

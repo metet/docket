@@ -49,10 +49,10 @@ Deliberately NOT enforced:
 Install with the rest of the hooks:  git config core.hooksPath tools/git-hooks
 Bypass with `git commit --no-verify` when you mean to.
 """
-import os, re, subprocess, sys
+import os, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from docket_lib import front_matter
+from docket_lib import front_matter, FILING_RE, PARTY_RE, read
 
 # <NNN>-<party>-<label>.md per §1. An opening filing is 000-request.md, which
 # names no party in its path -- its author is in the immutable `from` field, so
@@ -62,7 +62,6 @@ from docket_lib import front_matter
 # carrying one party's request alongside another party's answers could be
 # attributed to the latter and nothing would notice, because the only author the
 # check could see was the one in the filenames.
-FILING = re.compile(r"^\d+-([a-z0-9]+)-.+\.md$")
 REQUEST = "000-request.md"
 
 
@@ -99,7 +98,7 @@ def declared_party(msg):
     # "Your Name" is the unconfigured default and claims nothing.
     ident = git("var", "GIT_AUTHOR_IDENT")
     name = ident.split(" <")[0].strip() if ident else ""
-    return name if re.fullmatch(r"[a-z0-9]+", name) else None
+    return name if PARTY_RE.fullmatch(name) else None
 
 
 def staged_parties(store):
@@ -108,9 +107,9 @@ def staged_parties(store):
     for path in out.splitlines():
         path = path.strip()
         base = os.path.basename(path)
-        m = FILING.match(base)
-        if m:
-            found.add(m.group(1))
+        m = FILING_RE.match(base)
+        if m and m.group(3):
+            found.add(m.group(2))
         elif base == REQUEST:
             who = request_author(path)
             if who:
@@ -122,7 +121,7 @@ def main():
     if len(sys.argv) < 2:
         return 0
     try:
-        msg = open(sys.argv[1], encoding="utf-8").read()
+        msg = read(sys.argv[1])
     except OSError:
         return 0
 

@@ -14,7 +14,7 @@ Body is read from stdin, or --body, or left as a stub.
 """
 import os, re, sys, argparse, datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from docket_lib import (parties, load, reduce_docket, ACTS, STATUSES, CURRENT,
+from docket_lib import (parties, validate_docket, ACTS, STATUSES, CURRENT,
                         TERMINAL, CORRECTABLE, split_flow, quote_flow, scalar)
 
 def die(msg):
@@ -115,8 +115,7 @@ def main():
         if not a.docket: die(f"--docket is required for a {a.kind}")
         did = a.docket.split("-")[0]
         dirname = find_dir(store, did)
-        filings = load(os.path.join(store, dirname))
-        st = reduce_docket(filings)
+        filings, _invalid, _errs, _warns, st = validate_docket(store, dirname, known)
         nxt = max([int(f["num"]) for f in filings] or [0]) + 1
         if a.kind == "close":
             if a.frm != st["requester"]:
@@ -141,7 +140,8 @@ def main():
             # malformed one too, but filings are immutable: by then the only
             # remedy is another erratum correcting the correction.
             if a.act == "erratum":
-                if not a.supersedes or not a.corrects:
+                corrects = lst(a.corrects)
+                if not a.supersedes or not corrects:
                     die("--act erratum requires --supersedes <filing id> "
                         "and --corrects <field,...>")
                 tgt = next((f for f in filings if f["fm"].get("id") == a.supersedes), None)
@@ -150,8 +150,7 @@ def main():
                 if tgt["fm"].get("from") != a.frm:
                     die(f"only {tgt['fm'].get('from')} may correct {a.supersedes}; "
                         "file an objection instead")
-                bad = [f for f in (x.strip() for x in a.corrects.split(","))
-                       if f not in CORRECTABLE]
+                bad = [f for f in corrects if f not in CORRECTABLE]
                 if bad:
                     die(f"--corrects {bad} not correctable; allowed: {sorted(CORRECTABLE)}")
             elif a.supersedes or a.corrects:

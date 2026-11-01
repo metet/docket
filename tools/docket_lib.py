@@ -43,6 +43,7 @@ RETRACT_ONLY = {"date"}   # every filing has its own date; it cannot be replaced
 PROTECTED = {"protocol", "id", "docket", "from", "type", "status", "assignee"}
 STATUSES  = {"open","blocked","resolved","withdrawn"}
 TERMINAL  = {"resolved","withdrawn"}
+PARTY_RE  = re.compile(r"[a-z_][a-z0-9_-]*")
 
 def read(path):
     with open(path, encoding="utf-8", newline="") as f:
